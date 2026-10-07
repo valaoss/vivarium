@@ -87,6 +87,8 @@ export function buildFish(b) {
     } else {
       spread = pedH + (b.tailSpread - pedH) * u;
       len = b.tailLen * (0.6 + 0.4 * Math.pow(Math.abs(vv), 0.8));
+      // kılıçkuyruk: alt lob uzun bir kılıç gibi uzar
+      if (b.tail === 'sword' && vv < -0.55) len += b.tailLen * 2.2 * Math.min(1, (-vv - 0.55) / 0.35);
     }
     const droop = b.tail === 'veil' ? -Math.pow(u, 1.6) * b.tailLen * 0.35 : 0;
     return { x: 0, y: vv * spread * (b.tail === 'fan' ? 1 : b.tail === 'veil' ? 1.05 : 0.95) + (b.tailLift ?? 0) * u + droop, z: zTail + 0.05 - u * len, v: vv, w: u };

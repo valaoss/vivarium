@@ -52,26 +52,48 @@ function shared() {
   return SHARED;
 }
 
+// Tür rengine göre malzeme (red cherry: kırmızı, amano: yarı saydam gri-noktalı)
+const MATS = {};
+function materialsFor(color) {
+  const key = color ?? 'red';
+  if (MATS[key]) return MATS[key];
+  if (!color) { MATS[key] = { mat: shared().mat, legMat: shared().legMat }; return MATS[key]; }
+  const c = new THREE.Color(color);
+  const mat = patchUnderwater(new THREE.MeshPhysicalMaterial({
+    color: c, roughness: 0.3, clearcoat: 0.8, transparent: true, opacity: 0.7, sheen: 0.4, sheenColor: new THREE.Color(0xc0d0c8),
+  }), { key: 'shrimp-' + key, extra: (sh) => {
+    // amano: yanlarda küçük kırmızımsı-kahve noktalar
+    sh.fragmentShader = sh.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
+      { vec2 q = vWPos.xy * 4.5 + vWPos.z * 3.0; float d = fract(sin(dot(floor(q), vec2(12.9898, 78.233))) * 43758.5453);
+        float dot_ = step(0.82, d) * smoothstep(0.45, 0.2, length(fract(q) - 0.5));
+        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.45, 0.2, 0.15), dot_ * 0.8); }`);
+  } });
+  const legMat = patchUnderwater(new THREE.MeshStandardMaterial({ color: c, roughness: 0.5, transparent: true, opacity: 0.6 }), { key: 'shrimpleg-' + key });
+  MATS[key] = { mat, legMat };
+  return MATS[key];
+}
+
 export const SHRIMP_LABEL = { walk: 'Yürüyor', pick: 'Yüzey temizliyor', eat: 'Artık yiyor', swim: 'Yüzüyor', hide: 'Saklanıyor', sleep: 'Dinleniyor' };
 
 export class Shrimp {
   constructor(data) {
     this.data = data;
-    this.sp = SPECIES.shrimp;
+    this.sp = SPECIES[data.species] ?? SPECIES.shrimp;
     const s = shared();
+    const m = materialsFor(this.sp.color);
     this.group = new THREE.Group();
-    const scale = (data.size ?? 1) * 1.0;
+    const scale = (data.size ?? 1) * (this.sp.size ?? 1);
     this.group.scale.setScalar(scale);
     this.total = 2.6 * scale;
-    const body = new THREE.Mesh(s.body, s.mat);
+    const body = new THREE.Mesh(s.body, m.mat);
     body.castShadow = true;
     this.group.add(body);
-    const tail = new THREE.Mesh(s.fan, s.mat);
+    const tail = new THREE.Mesh(s.fan, m.mat);
     tail.position.set(0, -0.2, -1.4);
     this.group.add(tail);
     this.legs = [];
     for (let i = 0; i < 5; i++) for (const side of [-1, 1]) {
-      const leg = new THREE.Mesh(s.legGeo, s.legMat);
+      const leg = new THREE.Mesh(s.legGeo, m.legMat);
       leg.position.set(side * 0.22, -0.2, 0.7 - i * 0.22);
       leg.rotation.z = side * 0.6;
       leg.userData = { side, i };
@@ -80,7 +102,7 @@ export class Shrimp {
     }
     // yüzme bacakları (karın altında)
     for (let i = 0; i < 4; i++) for (const side of [-1, 1]) {
-      const sw = new THREE.Mesh(s.legGeo, s.legMat);
+      const sw = new THREE.Mesh(s.legGeo, m.legMat);
       sw.scale.set(0.8, 0.45, 0.8);
       sw.position.set(side * 0.15, -0.05, -0.15 - i * 0.22);
       sw.userData = { side, i, swim: true };
@@ -89,7 +111,7 @@ export class Shrimp {
     }
     this.ants = [];
     for (const side of [-1, 1]) {
-      const a = new THREE.Mesh(s.ant, s.legMat);
+      const a = new THREE.Mesh(s.ant, m.legMat);
       a.position.set(side * 0.1, 0.15, 1.05);
       a.scale.x = side;
       this.ants.push(a);
@@ -110,7 +132,7 @@ export class Shrimp {
     this.u = { uHighlight: { value: 0 } };
   }
 
-  get species() { return 'shrimp'; }
+  get species() { return this.data.species; }
   get radius() { return this.total * 0.6; }
 
   update(dt, world) {

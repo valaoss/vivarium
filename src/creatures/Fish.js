@@ -37,12 +37,13 @@ export class Fish {
         barbels: data.species === 'cory',
         eyeSize: b.eyeSize ?? (data.species === 'neon' ? 0.165 : data.species === 'cory' ? 0.12 : 0.14),
         tailLift: b.tailLift ?? (data.species === 'guppy' ? 0.15 : 0),
-        ventral: data.species === 'angel' ? 4 : 1,
+        ventral: { angel: 4, gourami: 5.5 }[data.species] ?? 1,
       });
     }
     const geo = GEO_CACHE[data.species];
+    this.baseTotal = geo.total;
     this.total = geo.total * scale;
-    const pals = data.species === 'betta' ? BETTA_PALETTES : GUPPY_PALETTES;
+    const pals = this.sp.colors ?? (data.species === 'betta' ? BETTA_PALETTES : GUPPY_PALETTES);
     const pal = pals[(data.palette ?? 0) % pals.length];
     this.u = makeFishUniforms(geo.total, this.sp.pattern, b.length / geo.total, pal[0], pal[1], data.seed ?? Math.random() * 100);
     this.group = new THREE.Group();
@@ -128,7 +129,8 @@ export class Fish {
     const acc = _v.set(0, 0, 0);
     let speed = sp.cruise * (d.trait === 'Sakin' ? 0.8 : 1);
     let maxTurn = 3.2;
-    const night = world.night;
+    // gececi türler (kuhli) gündüz saklanır, gece aktiftir
+    const night = sp.nocturnal ? Math.max(0, 1 - world.night * 1.5) * 0.9 : world.night;
 
     this.targetTimer -= dt;
     if (this.state !== 'curious' || this.targetTimer < 0) {
@@ -172,7 +174,9 @@ export class Fish {
         if (rule && (!sp.predator || d.hunger > 30)) {
           let best = null, bd = rule.range;
           for (const o of world.fish) {
-            if (o === this || !(rule.targets ?? rule.prey).includes(o.species)) continue;
+            const fry = sp.predator && o.data.fry && o.data.size < 0.6 && o.species !== this.species;
+            if (o === this || !((rule.targets ?? rule.prey).includes(o.species) || fry)) continue;
+            if (sp.territorial && o.data.fry) continue;
             const dd = o.pos.distanceTo(pos);
             if (dd < bd) { bd = dd; best = o; }
           }
@@ -343,6 +347,10 @@ export class Fish {
       // dururken yatay pozisyona dön
       this.fwd.y *= 0.95; this.fwd.normalize();
     }
+
+    // yavrular büyüdükçe ölçek
+    const sc = d.size ?? 1;
+    if (Math.abs(this.group.scale.x - sc) > 0.001) { this.group.scale.setScalar(sc); this.total = this.baseTotal * sc; }
 
     // --- Animasyon parametreleri ---
     const k = Math.min(spd / sp.burst, 1);

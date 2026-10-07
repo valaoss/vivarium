@@ -33,7 +33,8 @@ export function tick(state, dtMin, ctx) {
     plantUptake += m * PLANT_TYPES[p.type].uptake;
     plantO2 += m * PLANT_TYPES[p.type].o2;
   }
-  const shrimp = ctx.creatures.filter((c) => c.species === 'shrimp').length;
+  const shrimp = ctx.creatures.filter((c) => c.species === 'shrimp').length
+    + ctx.creatures.reduce((a, c) => a + (SPECIES[c.species].algaeEater ?? 0) * 2, 0);
 
   // Atık → filtre → nitrat
   w.waste += bioload * 0.9 * h;

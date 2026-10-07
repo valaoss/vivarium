@@ -129,12 +129,65 @@ const BODY_COLOR = /* glsl */ `
       c = mix(c, uColA * 0.55, smoothstep(0.3, 0.9, v));
       c += uColB * 0.25 * pow(1.0 - facing, 2.0) * smoothstep(0.1, 0.3, u);
       gGlow = 0.15; gGlowCol = uColA;
-    } else {
+    } else if (uPattern < 5.5) {
       // MELEK BALIĞI: gümüş zemin, siyah dikey bantlar
       c = mix(vec3(0.84, 0.84, 0.8), vec3(0.6, 0.55, 0.38), smoothstep(0.55, 0.95, v) * smoothstep(0.4, 0.1, u));
       float bars = band(u, 0.13, 0.035, 0.02) + band(u, 0.42, 0.06, 0.03) + band(u, 0.74, 0.045, 0.025) * 0.8 + band(u, 0.97, 0.03, 0.02) * 0.6;
       c = mix(c, vec3(0.06, 0.06, 0.07), clamp(bars, 0.0, 1.0) * 0.9);
       c += vec3(0.1, 0.12, 0.14) * pow(1.0 - facing, 2.0);
+    } else if (uPattern < 6.5) {
+      // PLATİ / KILIÇKUYRUK: doygun gövde, kuyruk sapında koyu leke
+      c = uColA;
+      c = mix(c, uColA * 0.55, smoothstep(0.35, 0.9, v));
+      c = mix(c, mix(uColA, vec3(1.0, 0.9, 0.7), 0.4), smoothstep(-0.4, -0.85, v));
+      c = mix(c, uColB, smoothstep(0.85, 0.95, u) * smoothstep(0.7, 0.2, abs(v)) * 0.85);
+      c = mix(c, uColB, band(v, 0.0, 0.05, 0.04) * smoothstep(0.2, 0.4, u) * 0.3);
+      c *= 0.9 + 0.1 * fn(vec2(u * 40.0, v * 12.0));
+      gGlow = 0.12; gGlowCol = uColA;
+    } else if (uPattern < 7.5) {
+      // SİYAH MOLİ: kadife siyah, hafif gümüşi pul parıltısı
+      c = vec3(0.025) * (0.8 + 0.4 * fn(vec2(u * 40.0, v * 12.0)));
+      c += vec3(0.05, 0.06, 0.07) * pow(1.0 - facing, 2.5);
+    } else if (uPattern < 8.5) {
+      // KARDİNAL TETRA: neon şerit + tüm karın kırmızı
+      c = mix(vec3(0.46, 0.48, 0.46), vec3(0.2, 0.19, 0.12), smoothstep(0.3, 0.7, v));
+      float stripe = band(v, 0.24 - u * 0.1, 0.15, 0.04) * smoothstep(0.05, 0.12, u) * smoothstep(0.95, 0.8, u);
+      vec3 sc = mix(vec3(0.0, 0.15, 0.95), vec3(0.0, 0.65, 0.9), pow(1.0 - facing, 1.5) * 0.8);
+      float nightK = 1.0 - uNight * 0.75;
+      c = mix(c, sc * nightK, stripe);
+      float red = smoothstep(0.1, -0.02, v) * smoothstep(0.08, 0.16, u) * smoothstep(1.02, 0.92, u);
+      c = mix(c, vec3(0.82, 0.02, 0.04) * (1.0 - uNight * 0.5), red);
+      gGlow = stripe * nightK * 2.0 + red * 0.15; gGlowCol = mix(sc, vec3(0.8, 0.0, 0.03), red);
+    } else if (uPattern < 9.5) {
+      // HARLEQUIN RASBORA: bakır-pembe gövde, siyah üçgen
+      c = mix(vec3(0.88, 0.56, 0.42), vec3(0.55, 0.42, 0.3), smoothstep(0.3, 0.8, v));
+      c = mix(c, vec3(0.95, 0.85, 0.75), smoothstep(-0.4, -0.8, v));
+      float tri = step(0.45, u) * step(u, 0.97) * step(-0.55 + (u - 0.45) * 1.0, v) * step(v, 0.4 - (u - 0.45) * 0.75);
+      c = mix(c, vec3(0.03, 0.02, 0.03), tri * 0.95);
+      c += vec3(0.1, 0.06, 0.08) * pow(1.0 - facing, 2.0);
+    } else if (uPattern < 10.5) {
+      // KİRAZ BARBUS
+      c = mix(vec3(0.8, 0.12, 0.12), vec3(0.45, 0.12, 0.08), smoothstep(0.3, 0.85, v));
+      c = mix(c, vec3(0.9, 0.45, 0.35), smoothstep(-0.4, -0.85, v));
+      c = mix(c, vec3(0.25, 0.05, 0.04), band(v, 0.05, 0.06, 0.04) * smoothstep(0.15, 0.3, u) * 0.6);
+      gGlow = 0.12; gGlowCol = vec3(0.8, 0.1, 0.1);
+    } else if (uPattern < 11.5) {
+      // CÜCE GURAMİ: çapraz kırmızı-mavi bantlar
+      float st = smoothstep(-0.2, 0.2, sin(u * 22.0 + v * 4.0));
+      c = mix(vec3(0.85, 0.22, 0.1), vec3(0.15, 0.4, 0.95), st);
+      c = mix(c, vec3(0.2, 0.45, 0.95), smoothstep(-0.5, -0.9, v) * 0.6);
+      gGlow = 0.2 * st; gGlowCol = vec3(0.2, 0.5, 1.0);
+    } else if (uPattern < 12.5) {
+      // KUHLİ: somon zemin üzerinde koyu halkalar
+      c = mix(vec3(0.95, 0.62, 0.38), vec3(1.0, 0.85, 0.7), smoothstep(-0.3, -0.85, v));
+      float ring = smoothstep(0.4, 0.55, fract(u * 11.0 + 0.2)) * smoothstep(-0.55, -0.2, v) * step(0.06, u);
+      c = mix(c, vec3(0.08, 0.05, 0.04), ring * 0.95);
+    } else {
+      // OTOCİNCLUS: kum rengi, koyu yan çizgi, beyaz karın
+      c = mix(vec3(0.6, 0.52, 0.38), vec3(0.38, 0.32, 0.22), smoothstep(0.3, 0.85, v));
+      c *= 0.85 + 0.25 * fn(vec2(u * 30.0, v * 9.0));
+      c = mix(c, vec3(0.12, 0.1, 0.07), band(v, 0.0, 0.12, 0.05) * smoothstep(0.08, 0.2, u));
+      c = mix(c, vec3(0.88, 0.85, 0.78), smoothstep(-0.4, -0.8, v));
     }
     // beyaz benek hastalığı
     float ich = smoothstep(0.8, 0.88, fn(vec2(u * 60.0, v * 18.0) + uSeed * 3.0)) * uIch;
@@ -184,12 +237,34 @@ const FIN_COLOR = /* glsl */ `
       rays = 0.9 + 0.1 * (rays - 0.82) / 0.18;
       a = 0.9 - smoothstep(0.88, 1.0, w) * 0.3;
       if (vSeg.z > 1.5) { c = uColA; a = 0.4; }
-    } else {
+    } else if (uPattern < 5.5) {
       c = vec3(0.8, 0.8, 0.78);
       float bar = band(vUv.x, 0.5, 0.12, 0.08) * (vSeg.y != 0.0 ? 1.0 : 0.0);
       c = mix(c, vec3(0.08), bar * 0.8);
       a = 0.25 + bar * 0.35;
       if (vSeg.z > 1.5) { a = 0.35; c = vec3(0.85); }
+    } else if (uPattern < 6.5) {
+      c = mix(uColA, uColB, smoothstep(0.6, 1.0, w) * isTail * 0.6);
+      a = 0.55 + 0.2 * w;
+    } else if (uPattern < 7.5) {
+      c = vec3(0.03); a = 0.8;
+    } else if (uPattern < 8.5) {
+      c = vec3(0.85, 0.85, 0.82); a = 0.18 + 0.12 * w;
+    } else if (uPattern < 9.5) {
+      c = vec3(0.95, 0.6, 0.45); a = 0.3;
+    } else if (uPattern < 10.5) {
+      c = vec3(0.85, 0.2, 0.18); a = 0.45;
+    } else if (uPattern < 11.5) {
+      float st = smoothstep(-0.2, 0.2, sin(vUv.x * 20.0 + vUv.y * 6.0));
+      c = mix(vec3(0.85, 0.25, 0.1), vec3(0.2, 0.45, 0.95), st);
+      c = mix(c, vec3(0.9, 0.3, 0.12), smoothstep(0.8, 1.0, w));
+      a = 0.6;
+      if (vSeg.z > 1.5) { c = vec3(0.95, 0.75, 0.55); a = 0.7; }
+    } else {
+      c = vec3(0.8, 0.75, 0.65);
+      float pep = smoothstep(0.65, 0.75, fn(vUv * vec2(12.0, 9.0)));
+      c = mix(c, vec3(0.15, 0.12, 0.1), pep * 0.6);
+      a = 0.25 + pep * 0.25;
     }
     c *= rays;
     float edge = 1.0 - smoothstep(0.85, 1.0, w) * 0.4;

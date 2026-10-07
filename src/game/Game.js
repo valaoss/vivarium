@@ -231,16 +231,20 @@ export class Game {
       size: 0.9 + r() * 0.2,
       seed: r() * 100,
       palette: extra.palette ?? Math.floor(r() * 6),
+      sex: extra.sex ?? (r() < 0.5 ? 'm' : 'f'),
       pos: extra.pos ?? [(r() - 0.5) * 30, TANK.water - 3, (r() - 0.5) * 12],
     };
     return this.addCreature(data);
   }
 
   addCreature(data) {
-    const C = { shrimp: Shrimp, snail: Snail }[data.species] ?? Fish;
+    const kind = SPECIES[data.species].kind;
+    const C = kind === 'shrimp' ? Shrimp : kind === 'snail' ? Snail : Fish;
     const c = new C(data);
     this.creatures.push(c);
     this.state.creatures.push(data);
+    this.state.seen ??= [];
+    if (!this.state.seen.includes(data.species)) this.state.seen.push(data.species);
     this.scene.add(c.group);
     return c;
   }
@@ -294,6 +298,42 @@ export class Game {
     }
     if (removed > 0) this.algaeDirty = true;
     return removed;
+  }
+
+  // -------------------------------------------------------------- Üreme
+  // Doğuran türler (lepistes, plati, moli, kılıçkuyruk): sağlıklı bir dişi ve
+  // erkek varsa ara sıra 2–4 yavru doğar; yavrular birkaç günde büyür.
+  updateBreeding(dtMin) {
+    const h = dtMin / 60;
+    for (const c of this.creatures) {
+      const d = c.data;
+      if (d.fry && d.size < (d.adultSize ?? 1)) {
+        d.size = Math.min(d.adultSize ?? 1, d.size + 0.012 * h * (d.hunger < 60 ? 1 : 0.3));
+        if (d.size >= (d.adultSize ?? 1) - 0.001) {
+          d.fry = false;
+          this.toast(`${d.name} artık yetişkin bir ${c.sp.name.toLowerCase()}!`, 'good');
+          this.discover('fryGrown', 'Yavrular bitkiler arasında saklanarak büyür; sık bitkili tanklarda hayatta kalma şansları artar.');
+        }
+      }
+    }
+    if (this.creatures.length >= 30) return;
+    for (const mother of [...this.creatures]) {
+      const sp = mother.sp, d = mother.data;
+      if (!sp.livebearer || d.sex !== 'f' || d.fry || d.health < 70 || d.hunger > 65) continue;
+      const hasMale = this.creatures.some((o) => o.species === mother.species && o.data.sex === 'm' && !o.data.fry);
+      if (!hasMale || Math.random() > 0.022 * h) continue;
+      const n = 2 + Math.floor(Math.random() * 3);
+      for (let i = 0; i < n && this.creatures.length < 30; i++) {
+        const fry = this.spawn(mother.species, {
+          palette: Math.random() < 0.5 ? d.palette : Math.floor(Math.random() * 6),
+          pos: [mother.pos.x + (Math.random() - 0.5) * 2, mother.pos.y, mother.pos.z + (Math.random() - 0.5) * 2],
+        });
+        Object.assign(fry.data, { size: 0.32, adultSize: 0.85 + Math.random() * 0.25, fry: true, trait: 'Çekingen', hunger: 20, stress: 20 });
+      }
+      this.state.counters.births = (this.state.counters.births ?? 0) + 1;
+      this.toast(`${d.name} (${sp.name}) ${n} yavru doğurdu! Yavrular bitkiler arasında saklanacak.`, 'good');
+      this.discover('birth', `${sp.name} doğuran bir türdür; yumurta yerine canlı yavru dünyaya getirir.`);
+    }
   }
 
   // ------------------------------------------------------------ Hastalık
@@ -504,6 +544,7 @@ export class Game {
     s.counters.healthyMin = healthy ? s.counters.healthyMin + dtMin : 0;
     if (healthy) { this.xpAcc = (this.xpAcc ?? 0) + dtMin; if (this.xpAcc >= 30) { this.xpAcc -= 30; this.addXp(1); } }
     this.updateDisease(dtMin);
+    this.updateBreeding(dtMin);
 
     if (!offline && this.ticks++ % 10 === 0) for (const p of this.plants.plants) this.plants.layout(p);
     this.checkQuests();
