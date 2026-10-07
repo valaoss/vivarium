@@ -56,7 +56,7 @@ export function createHUD(game, root, sound) {
 
   // ---- Araç çubuğu (sol alt) ----
   const tools = h(`
-    <div class="tools glass">
+    <div class="tools">
       <button data-mode="view" title="Bak / incele">${icon('eye')}<span>Bak</span></button>
       <button data-mode="feed" title="Yem ver">${icon('food')}<span>Yem</span></button>
       <button data-mode="wipe" title="Camı sil">${icon('wipe')}<span>Cam sil</span></button>
@@ -64,7 +64,10 @@ export function createHUD(game, root, sound) {
       <button data-act="air" title="Hava taşı">${icon('air')}<span>Hava</span></button>
       <button data-act="light" title="Lamba">${icon('light')}<span>Işık</span></button>
     </div>`);
-  root.appendChild(tools);
+  // Araçlar ve sağ grup tek bir alt "dock" içinde
+  const dock = h('<div class="dock glass"></div>');
+  dock.appendChild(tools);
+  root.appendChild(dock);
 
   const waterPop = h(`
     <div class="pop glass water-pop hidden">
@@ -82,12 +85,13 @@ export function createHUD(game, root, sound) {
 
   // ---- Sağ alt ----
   const right = h(`
-    <div class="right-tools glass">
+    <div class="right-tools">
       <button data-act="shop">${icon('shop')}<span>Dükkân</span></button>
       <button data-act="photo">${icon('camera')}<span>Fotoğraf</span></button>
       <button data-act="sound">${icon('sound')}<span>Ses</span></button>
     </div>`);
-  root.appendChild(right);
+  dock.appendChild(h('<div class="dock-sep"></div>'));
+  dock.appendChild(right);
 
   const shop = h(`
     <div class="shop glass hidden">
@@ -351,7 +355,8 @@ export function createHUD(game, root, sound) {
       const el = h(`
         <div class="welcome">
           <div class="wbox glass">
-            <div class="wlogo">VIVARIUM</div>
+            <div class="wmark"><svg viewBox="0 0 64 40" aria-hidden="true"><path d="M6 20c8-12 26-15 38-6l12-8-3 14 3 14-12-8C32 35 14 32 6 20z" fill="currentColor"/><circle cx="17" cy="18" r="2.4" fill="#0e1a17"/></svg></div>
+            <div class="wlogo">Vivarium</div>
             <div class="wtag">Küçük bir akvaryumla başla, canlılarını tanı, doğanın dengesini öğren.</div>
             ${text ? `<div class="wmsg">${text}</div>` : ''}
             ${first ? '<div class="wmsg">İki lepistes, birkaç bitki ve bir hava taşı seni bekliyor. Sol üstteki görevleri takip et.</div>' : ''}
