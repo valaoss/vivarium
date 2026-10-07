@@ -2,8 +2,9 @@ import { Game } from './game/Game.js';
 import { createHUD } from './ui/hud.js';
 import { Sound } from './audio/Sound.js';
 import { loadRealFish } from './creatures/realModels.js';
+import { loadSnailShell } from './creatures/Snail.js';
 
-loadRealFish().then(start);
+Promise.all([loadRealFish(), loadSnailShell()]).then(start);
 
 function start() {
   const game = new Game(document.getElementById('scene'));

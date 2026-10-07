@@ -42,6 +42,7 @@ Kaydı sıfırlamak için tarayıcı konsolunda `vivarium.reset()`. Su yüzeyi y
 - Beta: "[Betta Splendens](https://sketchfab.com/3d-models/f4eeb7f50ad24873842bd954ad27d23b)" — BlueMesh, CC-BY 4.0
 - Anubias: "[Plants Anubias](https://sketchfab.com/3d-models/2ba1d06a191b437e848b81b2981a9e02)" — Pala_002, CC-BY 4.0
 - Otocinclus (gövde): "[Hypostomus / Coroncoro](https://sketchfab.com/3d-models/3c4466d5f0ce4b2e81a692ba89807ced)" — alzarac, CC-BY 4.0 (otocinclus deseniyle)
+- Nerit kabuğu: "[Black and White Nerite Shell](https://sketchfab.com/3d-models/c3b2ba55a35946608814d0db896cbe58)" — RISD Nature Lab, CC-BY 4.0 (zebra nerit tonuyla)
 - Kök: "[Real Aquarium Wood 3D scan](https://sketchfab.com/3d-models/c53807eff7c4427faacfde6c1b581532)" — zdenkoroman, CC-BY 4.0
 
 Melek balığı: "[Freshwater Angelfish](https://sketchfab.com/3d-models/37475fc6c8904b6bbf7e27617bd851b8)" — Wataru Onuki (monte-hotate), Sketchfab Standard lisansı; yabani gümüş-çizgili desenle boyandı.

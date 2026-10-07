@@ -3,6 +3,41 @@ import { TANK, HALF_W, HALF_D } from '../config.js';
 import { SPECIES } from './species.js';
 import { sandHeight } from '../world/substrate.js';
 import { patchUnderwater } from '../render/water.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+// Gerçek nerit kabuğu taraması (RISD Nature Lab, CC-BY). Yüklenemezse prosedürel kabuk kalır.
+let SCAN = null;
+export function loadSnailShell() {
+  return new Promise((resolve) => {
+    new GLTFLoader().load(`${import.meta.env.BASE_URL}models/creatures/nerite.glb`, (gltf) => {
+      gltf.scene.updateMatrixWorld(true);
+      let src = null;
+      gltf.scene.traverse((o) => { if (o.isMesh && !src) src = o; });
+      const geo = src.geometry.clone().applyMatrix4(src.matrixWorld);
+      geo.computeBoundingBox();
+      const b = geo.boundingBox, size = b.getSize(new THREE.Vector3()), c = b.getCenter(new THREE.Vector3());
+      // tabanı y=0, en uzun yatay eksen +Z olacak şekilde hizala; boy 2.2 birim
+      geo.translate(-c.x, -b.min.y, -c.z);
+      if (size.x > size.z) geo.rotateY(Math.PI / 2);
+      const k = 2.2 / Math.max(size.x, size.z);
+      geo.scale(k, k, k);
+      geo.computeVertexNormals();
+      const mat = patchUnderwater(new THREE.MeshPhysicalMaterial({
+        map: src.material.map, roughness: 0.4, clearcoat: 0.5, clearcoatRoughness: 0.3,
+      }), {
+        key: 'snailshell-scan',
+        extra: (sh) => {
+          // Neritina natalensis: beyaz bantları zeytin-altın tonuna çevir (zebra nerit)
+          sh.fragmentShader = sh.fragmentShader.replace('#include <map_fragment>', `#include <map_fragment>
+            { float l = dot(diffuseColor.rgb, vec3(0.3, 0.59, 0.11));
+              diffuseColor.rgb = mix(vec3(0.02, 0.018, 0.012), vec3(0.62, 0.48, 0.12), smoothstep(0.08, 0.5, l)); }`);
+        },
+      });
+      SCAN = { geo, mat };
+      resolve();
+    }, undefined, () => resolve());
+  });
+}
 
 let SHARED = null;
 function shared() {
@@ -53,11 +88,12 @@ export class Snail {
     const scale = (data.size ?? 1) * 0.85;
     this.total = 2 * scale;
     this.body = new THREE.Group();
-    const shell = new THREE.Mesh(s.shell, s.shellMat);
-    shell.position.y = 0.35;
+    const shell = SCAN ? new THREE.Mesh(SCAN.geo, SCAN.mat) : new THREE.Mesh(s.shell, s.shellMat);
+    shell.position.y = SCAN ? 0.1 : 0.35;
     shell.castShadow = true;
     const foot = new THREE.Mesh(s.foot, s.footMat);
     foot.position.set(0, 0.2, 0.25);
+    if (SCAN) { foot.scale.set(0.85, 0.8, 0.72); foot.position.set(0, 0.16, 0.2); }
     this.body.add(shell, foot);
     this.tents = [];
     for (const side of [-1, 1]) {
