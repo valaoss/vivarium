@@ -37,6 +37,14 @@ Kaydı sıfırlamak için tarayıcı konsolunda `vivarium.reset()`. Su yüzeyi y
 ## 3D model atıfları (CC-BY 4.0)
 
 - Neon tetra: "[Paracheirodon Innesi _ Tetra Neon](https://sketchfab.com/3d-models/paracheirodon-innesi---tetra-neon-2fabf5db754746b7b81ebfa0bbe99161)" — [BlueMesh](https://sketchfab.com/VapTor), [CC-BY 4.0](http://creativecommons.org/licenses/by/4.0/). Oyunda iskelet animasyonu yerine kendi yüzme shader'ımıza uyarlandı.
+- Lepistes (erkek): "[Guppy Fish](https://sketchfab.com/3d-models/21e14e4b961e406385539f79eacdb1dc)" — BlueMesh, CC-BY 4.0
+- Lepistes (dişi): "[Guppy ♀](https://sketchfab.com/3d-models/feab250d4ab544de8eb7fda9fc1c2978)" — Nestaeric, CC-BY 4.0
+- Beta: "[Betta Splendens](https://sketchfab.com/3d-models/f4eeb7f50ad24873842bd954ad27d23b)" — BlueMesh, CC-BY 4.0
+- Nerit salyangoz kabuğu: "[Black and White Nerite Shell](https://sketchfab.com/3d-models/c3b2ba55a35946608814d0db896cbe58)" — RISDNaturelab, CC-BY 4.0
+- Anubias: "[Plants Anubias](https://sketchfab.com/3d-models/2ba1d06a191b437e848b81b2981a9e02)" — Pala_002, CC-BY 4.0
+- Kök: "[Real Aquarium Wood 3D scan](https://sketchfab.com/3d-models/c53807eff7c4427faacfde6c1b581532)" — zdenkoroman, CC-BY 4.0
+
+CC0 (atıf gerekmez, teşekkürler): ffishAsia & floraZia taramaları (kılıçkuyruk, medaka, loach, karides), Poly Haven `rock_07`, `rock_09`, `dead_quiver_branch_01`. Modeller telefon için sadeleştirildi ve dokuları WebP'ye çevrildi.
 
 ## Yapı
 

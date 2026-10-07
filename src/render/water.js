@@ -6,14 +6,45 @@ export const WU = {
   uTime: { value: 0 },
   uLamp: { value: 1 },                                   // lamba yoğunluğu 0..1
   uLampColor: { value: new THREE.Color(1, 0.98, 0.94) },
-  uAbsorb: { value: new THREE.Vector3(0.03, 0.0115, 0.0095) }, // cm başına emilim
-  uScatter: { value: new THREE.Color(0.03, 0.11, 0.115) },   // suyun kendi saçılma rengi
+  uAbsorb: { value: new THREE.Vector3(0.0065, 0.0024, 0.0021) }, // cm başına emilim (temiz su: kırmızıyı hafifçe yutar)
+  uScatter: { value: new THREE.Color(0.05, 0.085, 0.1) },    // suyun kendi saçılma rengi
   uTurbidity: { value: 0 },                               // 0 berrak .. 1 çok bulanık
   uAlgae: { value: 0 },                                   // yeşillenme 0..1
   uCaustic: { value: 1 },
   uBoxMin: { value: new THREE.Vector3(-HALF_W, 0, -HALF_D) },
   uBoxMax: { value: new THREE.Vector3(HALF_W, TANK.water, HALF_D) },
+  tCaustic: { value: null },                              // waterSim doldurur
+  uCLight: { value: new THREE.Vector3(0, -1, 0) },        // düz yüzeyden kırılan ışık yönü
+  uCRefY: { value: 3 },                                   // kostik düzleminin yüksekliği
+  tHeight: { value: null },                               // yüzey yükseklik alanı (cm)
+  uSimTexel: { value: new THREE.Vector2(1 / 256, 1 / 128) },
+  uWaveAmp: { value: 1.25 },                               // sürekli yüzey kıpırtısı
 };
+
+export const WAVES_GLSL = /* glsl */ `
+// Filtre akıntısının yüzeyde sürekli tuttuğu ince kılcal dalgalar (yükseklik, eğim x, eğim z)
+vec3 baseWaves(vec2 p, float t, float amp) {
+  vec3 r = vec3(0.0);
+  float ph;
+  #define W(kx, kz, w, a, o) ph = kx * p.x + kz * p.y - w * t + o; r += vec3(sin(ph), cos(ph) * kx, cos(ph) * kz) * a;
+  W(2.8560, 0.0001, 26.8258, 0.0035, 1.9582);
+  W(-1.8919, 1.6443, 24.0183, 0.0054, 2.5669);
+  W(0.8488, -2.0296, 21.6638, 0.0046, 2.9672);
+  W(0.9053, 1.7054, 19.6697, 0.0042, 4.4834);
+  W(-1.6395, -0.4284, 17.9628, 0.0056, 3.6949);
+  W(1.4830, -0.1120, 16.4852, 0.0064, 0.5320);
+  W(-0.4931, 1.2086, 15.1917, 0.0096, 3.7217);
+  W(-0.1747, -1.1322, 14.0474, 0.0090, 1.4753);
+  W(0.8690, 0.5058, 13.0253, 0.0129, 0.0730);
+  W(-0.8470, 0.2475, 12.1043, 0.0126, 4.4804);
+  W(0.3272, -0.7020, 11.2684, 0.0123, 5.5729);
+  W(0.0009, 0.6797, 10.5048, 0.0105, 3.8363);
+  W(-0.2764, -0.5287, 9.8037, 0.0151, 5.6636);
+  W(0.5112, -0.1131, 9.1573, 0.0235, 5.0770);
+  #undef W
+  return r * amp;
+}
+`;
 
 export const WATER_GLSL = /* glsl */ `
 uniform float uTime;
@@ -26,6 +57,13 @@ uniform float uAlgae;
 uniform float uCaustic;
 uniform vec3 uBoxMin;
 uniform vec3 uBoxMax;
+uniform sampler2D tCaustic;
+uniform vec3 uCLight;
+uniform float uCRefY;
+uniform sampler2D tHeight;
+uniform vec2 uSimTexel;
+uniform float uWaveAmp;
+${WAVES_GLSL}
 
 vec2 wBoxHit(vec3 ro, vec3 rd) {
   vec3 inv = 1.0 / rd;
@@ -48,13 +86,17 @@ float waterPath(vec3 p) {
 }
 
 vec3 waterSigma() {
-  // Bulanıklık her kanalı, yosun ise kırmızı/maviyi daha çok yutar (yeşile kayma)
-  return uAbsorb + uTurbidity * vec3(0.06, 0.054, 0.065) + uAlgae * vec3(0.045, 0.012, 0.06);
+  // Bulanıklık (bakteri/atık) ışığı çoğunlukla saçar, renk ayırmadan söndürür;
+  // yosun (yeşil su) ise kırmızı ve maviyi yutar.
+  return uAbsorb + uTurbidity * vec3(0.022, 0.021, 0.02) + uAlgae * vec3(0.04, 0.01, 0.05);
 }
 
 vec3 waterInscatter() {
-  vec3 murk = mix(vec3(0.22, 0.24, 0.17), vec3(0.12, 0.24, 0.06), uAlgae / max(uAlgae + uTurbidity, 0.001));
-  vec3 base = mix(uScatter, murk, clamp(uTurbidity * 1.3 + uAlgae * 0.8, 0.0, 1.0));
+  vec3 milky = vec3(0.34, 0.37, 0.37);   // bakteri bulanıklığı: süt beyazı
+  vec3 green = vec3(0.12, 0.24, 0.07);   // yeşil su
+  float t = clamp(uTurbidity * 1.1, 0.0, 1.0);
+  float g = clamp(uAlgae * 0.9, 0.0, 1.0);
+  vec3 base = mix(mix(uScatter, milky, t), green, g);
   return base * (0.08 + uLamp * 0.92) * uLampColor;
 }
 
@@ -64,34 +106,40 @@ vec3 applyWater(vec3 col, vec3 wp) {
   return col * T + waterInscatter() * (1.0 - T);
 }
 
-float causticLayer(vec2 p, float t) {
-  vec2 i = p;
-  float c = 1.0;
-  float inten = 0.005;
-  for (int n = 0; n < 4; n++) {
-    float tt = t * (1.0 - (3.5 / float(n + 1)));
-    i = p + vec2(cos(tt - i.x) + sin(tt + i.y), sin(tt - i.y) + cos(tt + i.x));
-    c += 1.0 / length(vec2(p.x / (sin(i.x + tt) / inten), p.y / (cos(i.y + tt) / inten)));
-  }
-  c /= 4.0;
-  c = 1.17 - pow(c, 1.4);
-  return pow(abs(c), 8.0);
+// Yüzeyin xz noktasındaki eğimi (dh/dx, dh/dz)
+vec2 simSlope(vec2 xz) {
+  vec2 size = uBoxMax.xz - uBoxMin.xz;
+  vec2 uv = xz / size + 0.5;
+  vec2 dx = vec2(uSimTexel.x, 0.0), dy = vec2(0.0, uSimTexel.y);
+  vec2 cell = size * uSimTexel * 2.0;
+  return vec2(
+    (texture2D(tHeight, uv + dx).r - texture2D(tHeight, uv - dx).r) / cell.x,
+    (texture2D(tHeight, uv + dy).r - texture2D(tHeight, uv - dy).r) / cell.y
+  ) + baseWaves(xz, uTime, uWaveAmp).yz;
 }
 
-vec3 causticRGB(vec3 wp) {
-  // Işık yukarıdan gelir; derinlik arttıkça desen genişler ve yumuşar
-  float depth = clamp((uBoxMax.y - wp.y) / uBoxMax.y, 0.0, 1.0);
-  vec2 uv = wp.xz * (0.085 - depth * 0.02) + vec2(wp.y * 0.01);
-  vec2 q = mod(uv * 6.28318, 6.28318) - 250.0;
-  float t = uTime * 0.45 + 23.0;
-  float off = 0.012 + depth * 0.02;
+// Simüle edilen yüzeyden kırılan ışığın wp noktasındaki yoğunluğu (ortalama 1)
+vec3 causticAt(vec3 wp) {
+  if (wp.y > uBoxMax.y) return vec3(1.0);
+  vec2 size = uBoxMax.xz - uBoxMin.xz;
+  float t = (uCRefY - wp.y) / uCLight.y;
+  vec2 uv = (wp.xz + uCLight.xz * t) / size + 0.5;
+  float off = abs(wp.y - uCRefY);
+  // geniş LED kaynağı: kostik düzleminden uzaklaştıkça yumuşar
+  vec2 b = vec2(0.0012, 0.0024) * (1.0 + off * 0.35);
+  vec2 ca = vec2(0.0009 + off * 0.00008, 0.0);
   vec3 c = vec3(
-    causticLayer(q + vec2(off, 0.0), t),
-    causticLayer(q, t),
-    causticLayer(q - vec2(off, 0.0), t)
+    texture2D(tCaustic, uv + ca).r,
+    texture2D(tCaustic, uv).r,
+    texture2D(tCaustic, uv - ca).r
   );
-  float fade = (1.0 - uTurbidity * 0.85) * (1.0 - depth * 0.35);
-  return c * fade;
+  float soft = 0.25 * (
+    texture2D(tCaustic, uv + b).r + texture2D(tCaustic, uv - b).r +
+    texture2D(tCaustic, uv + vec2(b.x, -b.y)).r + texture2D(tCaustic, uv + vec2(-b.x, b.y)).r);
+  c = mix(c, vec3(soft), clamp(off / 14.0, 0.15, 0.75));
+  // yüzeye yakın noktalarda ışık henüz odaklanmamıştır
+  float focus = pow(clamp((uBoxMax.y - wp.y) / (uBoxMax.y - uCRefY), 0.0, 1.0), 0.65);
+  return mix(vec3(1.0), c, focus * (1.0 - uTurbidity * 0.8));
 }
 `;
 
@@ -129,8 +177,7 @@ export function patchUnderwater(material, { key = 'uw', caustics = true, extra =
         `
         vec3 wN_ = normalize((vec4(normal, 0.0) * viewMatrix).xyz);
         float up_ = clamp(wN_.y * 0.75 + 0.35, 0.0, 1.0);
-        vec3 causticMul = vec3(0.5) + causticRGB(vWPos) * 1.9 * uCaustic * up_;
-        if (vWPos.y > uBoxMax.y) causticMul = vec3(1.0);
+        vec3 causticMul = mix(vec3(1.0), causticAt(vWPos), uCaustic * up_);
         ` + lights,
       );
     }
@@ -186,17 +233,12 @@ export function createWaterVolume() {
 
 // ---------------------------------------------------------------------------
 // Su yüzeyi
-export const SURFACE_U = {
-  uRipple: { value: new THREE.Vector4(0, 0, -100, 0) }, // x, z, başlangıç zamanı, güç
-  uBubbleSrc: { value: new THREE.Vector3(22, -10, 1) },
-};
-
 export function createWaterSurface(refl) {
   const geo = new THREE.PlaneGeometry(TANK.w - 0.1, TANK.d - 0.1, 1, 1);
   geo.rotateX(-Math.PI / 2);
   geo.translate(0, TANK.water, 0);
   const mat = new THREE.ShaderMaterial({
-    uniforms: { ...WU, ...SURFACE_U, ...refl.uniforms },
+    uniforms: { ...WU, ...refl.uniforms },
     vertexShader: /* glsl */ `
       uniform mat4 uReflMat;
       varying vec3 vWPos;
@@ -212,31 +254,10 @@ export function createWaterSurface(refl) {
       varying vec4 vReflUv;
       uniform sampler2D tReflect;
       uniform float uReflOn;
-      uniform vec4 uRipple;
-      uniform vec3 uBubbleSrc;
       ${WATER_GLSL}
 
       vec2 waveGrad(vec2 p, float t) {
-        vec2 g = vec2(0.0);
-        // birkaç yönlü küçük dalga
-        vec2 d1 = normalize(vec2(1.0, 0.3));  float f1 = dot(p, d1) * 0.9 + t * 1.6;
-        vec2 d2 = normalize(vec2(-0.4, 1.0)); float f2 = dot(p, d2) * 1.3 + t * 2.1;
-        vec2 d3 = normalize(vec2(0.7, -0.8)); float f3 = dot(p, d3) * 2.3 + t * 2.9;
-        vec2 d4 = normalize(vec2(-1.0, -0.2)); float f4 = dot(p, d4) * 3.7 + t * 3.7;
-        g += d1 * cos(f1) * 0.05 + d2 * cos(f2) * 0.04 + d3 * cos(f3) * 0.025 + d4 * cos(f4) * 0.018;
-        // hava taşının yarattığı kıpırtı
-        vec2 bp = p - uBubbleSrc.xy;
-        float br = length(bp) + 1e-3;
-        g += (bp / br) * cos(br * 2.4 - t * 9.0) * exp(-br * 0.18) * 0.22 * uBubbleSrc.z;
-        // dokunma / yem dalgası
-        float age = t - uRipple.z;
-        if (age > 0.0 && age < 4.0) {
-          vec2 rp = p - uRipple.xy;
-          float rr = length(rp) + 1e-3;
-          float front = age * 9.0;
-          g += (rp / rr) * sin((rr - front) * 1.6) * exp(-abs(rr - front) * 0.5) * exp(-age * 0.9) * 0.35 * uRipple.w;
-        }
-        return g;
+        return simSlope(p);
       }
 
       void main() {
@@ -358,7 +379,8 @@ export function createGodRays(count = 9) {
           float fall = pow(vUv.y, 1.3);
           float flick = 0.55 + 0.45 * sin(uTime * 0.7 + uSeed + vUv.x * 3.0) * sin(uTime * 0.43 + uSeed * 1.7);
           float strength = (0.05 + uTurbidity * 0.12) * uLamp * flick;
-          vec3 c = uLampColor * strength * edge * fall;
+          float beam = causticAt(vWPos).g;
+          vec3 c = uLampColor * strength * edge * fall * (0.35 + beam * 0.9);
           float d = waterPath(vWPos);
           c *= exp(-d * 0.01);
           gl_FragColor = vec4(c, 1.0);

@@ -1,6 +1,12 @@
 import * as THREE from 'three';
 import { TANK, HALF_W, HALF_D } from '../config.js';
-import { WU } from './water.js';
+import { WU, WATER_GLSL } from './water.js';
+
+// Yan camlardaki tam iç yansıma için iki ayna (Game günceller)
+export const MIRROR_U = {
+  tMir0: { value: null }, uMirMat0: { value: new THREE.Matrix4() }, uMirPlane0: { value: new THREE.Vector4() }, uMirOn0: { value: 0 },
+  tMir1: { value: null }, uMirMat1: { value: new THREE.Matrix4() }, uMirPlane1: { value: new THREE.Vector4() }, uMirOn1: { value: 0 },
+};
 
 export const ALGAE_GRID = { w: 72, h: 44 };
 
@@ -20,12 +26,11 @@ export function createTank(scene) {
   algaeTex.needsUpdate = true;
 
   const glassUniforms = {
-    uLamp: WU.uLamp,
-    uLampColor: WU.uLampColor,
+    ...WU,
+    ...MIRROR_U,
     uAlgaeMap: { value: algaeTex },
     uUseAlgae: { value: 0 },
     uTap: { value: new THREE.Vector4(0, 0, -100, 0) },
-    uTime: WU.uTime,
   };
 
   const glassMat = (useAlgae) => new THREE.ShaderMaterial({
@@ -45,11 +50,36 @@ export function createTank(scene) {
       varying vec3 vWPos;
       varying vec3 vN;
       varying vec2 vUv;
-      uniform float uLamp;
-      uniform vec3 uLampColor;
       uniform sampler2D uAlgaeMap;
       uniform float uUseAlgae;
-      uniform float uTime;
+      uniform sampler2D tMir0; uniform mat4 uMirMat0; uniform vec4 uMirPlane0; uniform float uMirOn0;
+      uniform sampler2D tMir1; uniform mat4 uMirMat1; uniform vec4 uMirPlane1; uniform float uMirOn1;
+      ${WATER_GLSL}
+
+      // Kameradan gelen ışın suya başka bir camdan girip bu cama sığ açıyla
+      // çarpıyorsa ışık dışarı çıkamaz: cam ayna gibi tankın içini yansıtır.
+      float tirAmount(vec3 N, vec4 plane, out float pathW) {
+        pathW = 0.0;
+        if (vWPos.y > uBoxMax.y || abs(dot(plane.xyz, vWPos) - plane.w) > 1.2 || abs(dot(N, plane.xyz)) < 0.9) return 0.0;
+        vec3 rd = normalize(vWPos - cameraPosition);
+        vec3 inv = 1.0 / rd;
+        vec3 tmin = min((uBoxMin - cameraPosition) * inv, (uBoxMax - cameraPosition) * inv);
+        float tEnter = max(max(tmin.x, tmin.y), tmin.z);
+        float tFrag = length(vWPos - cameraPosition);
+        if (tEnter <= 0.0 || tEnter > tFrag - 0.2) return 0.0;
+        vec3 en = tmin.x >= tmin.y && tmin.x >= tmin.z ? vec3(-sign(rd.x), 0.0, 0.0)
+                : (tmin.y >= tmin.z ? vec3(0.0, -sign(rd.y), 0.0) : vec3(0.0, 0.0, -sign(rd.z)));
+        vec3 dw = refract(rd, en, 0.7502);
+        pathW = tFrag - tEnter;
+        return smoothstep(0.69, 0.63, abs(dot(dw, plane.xyz)));
+      }
+
+      vec3 mirrorSample(sampler2D tex, mat4 m, float pathW) {
+        vec4 p = m * vec4(vWPos, 1.0);
+        vec3 c = texture2D(tex, clamp(p.xy / p.w, 0.001, 0.999)).rgb;
+        vec3 T = exp(-waterSigma() * pathW);
+        return c * T + waterInscatter() * (1.0 - T);
+      }
 
       float h21(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
       float vnoise(vec2 p) {
@@ -81,6 +111,16 @@ export function createTank(scene) {
         float tintA = 0.03 + (1.0 - cosT) * 0.12;
         vec3 col = refl;
         float a = tintA + fres * 0.3;
+
+        float pw;
+        if (uMirOn0 > 0.5) {
+          float k = tirAmount(N, uMirPlane0, pw);
+          if (k > 0.0) { col = mix(col, mirrorSample(tMir0, uMirMat0, pw), k); a = mix(a, 0.97, k); }
+        }
+        if (uMirOn1 > 0.5) {
+          float k = tirAmount(N, uMirPlane1, pw);
+          if (k > 0.0) { col = mix(col, mirrorSample(tMir1, uMirMat1, pw), k); a = mix(a, 0.97, k); }
+        }
 
         if (uUseAlgae > 0.5) {
           float m = texture2D(uAlgaeMap, vUv).r;
@@ -199,6 +239,7 @@ export function createTank(scene) {
   return {
     group,
     front,
+    panels: [front, left, right, backGlass],
     algaeData,
     algaeTex,
     lampEmitMat,

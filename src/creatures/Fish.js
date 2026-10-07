@@ -3,7 +3,7 @@ import { TANK, HALF_W, HALF_D } from '../config.js';
 import { SPECIES } from './species.js';
 import { buildFish } from './fishGeometry.js';
 import { makeFishMaterials, makeFishUniforms } from './fishMaterial.js';
-import { REAL_FISH, makeRealFishMeshes } from './realModels.js';
+import { makeRealFishMeshes, realModelKey } from './realModels.js';
 import { sandHeight } from '../world/substrate.js';
 
 const GEO_CACHE = {};
@@ -48,9 +48,10 @@ export class Fish {
     this.u = makeFishUniforms(geo.total, this.sp.pattern, b.length / geo.total, pal[0], pal[1], data.seed ?? Math.random() * 100);
     this.group = new THREE.Group();
     this.group.scale.setScalar(scale);
-    if (REAL_FISH[data.species]) {
-      // Gerçek 3D model (Sketchfab, CC-BY)
-      const meshes = makeRealFishMeshes(data.species, this.u);
+    const realKey = realModelKey(data.species, data.sex);
+    if (realKey) {
+      // Gerçek 3D model (Sketchfab)
+      const meshes = makeRealFishMeshes(realKey, this.u);
       this.group.add(...meshes);
       this.body = meshes[0];
     } else {

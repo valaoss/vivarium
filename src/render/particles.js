@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { TANK } from '../config.js';
+import { TANK, MOBILE } from '../config.js';
 import { WU, WATER_GLSL, patchUnderwater } from './water.js';
 
 // Suda asılı ince toz: su "dolu" görünsün
@@ -63,40 +63,74 @@ export function createDust(count = 700) {
   return pts;
 }
 
-// Hava taşı kabarcıkları (CPU tarafında güncellenir; sayı az)
-export function createBubbles(source, max = 260) {
+// Hava taşı kabarcıkları. Küçükler düz yükselir; büyükler basık ve zikzaklı.
+// Yüzeye çıkanların bir kısmı kısa süre yüzeyde kalır, patlayınca dalga yapar.
+export function createBubbles(source, max = MOBILE ? 360 : 640) {
   const pos = new Float32Array(max * 3);
   const size = new Float32Array(max);
+  const phase = new Float32Array(max);
+  const flat = new Float32Array(max);
   const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3).setUsage(THREE.DynamicDrawUsage));
-  geo.setAttribute('aSize', new THREE.BufferAttribute(size, 1).setUsage(THREE.DynamicDrawUsage));
+  const dyn = (a, n) => new THREE.BufferAttribute(a, n).setUsage(THREE.DynamicDrawUsage);
+  geo.setAttribute('position', dyn(pos, 3));
+  geo.setAttribute('aSize', dyn(size, 1));
+  geo.setAttribute('aPhase', dyn(phase, 1));
+  geo.setAttribute('aFlat', dyn(flat, 1));
   const mat = new THREE.ShaderMaterial({
-    uniforms: { ...WU, uPx: { value: window.devicePixelRatio } },
+    uniforms: { ...WU, uScale: { value: 1000 } },
     vertexShader: /* glsl */ `
       attribute float aSize;
-      uniform float uPx;
+      attribute float aPhase;
+      attribute float aFlat;
+      uniform float uScale;
       varying vec3 vWPos;
+      varying float vPhase;
+      varying float vFlat;
+      varying float vOblate;
+      varying float vCover;
       void main() {
         vec4 wp = modelMatrix * vec4(position, 1.0);
         vWPos = wp.xyz;
+        vPhase = aPhase;
+        vFlat = aFlat;
+        vOblate = smoothstep(0.06, 0.2, aSize);
         vec4 mv = viewMatrix * wp;
         gl_Position = projectionMatrix * mv;
-        gl_PointSize = aSize * uPx * 560.0 / -mv.z;
+        float px = 2.0 * aSize * uScale / -mv.z;
+        // piksel altı kabarcıklar silinmez, yalnızca sönükleşir
+        vCover = clamp(px / 2.0, 0.0, 1.0);
+        vCover *= vCover;
+        gl_PointSize = max(px * 1.15, 2.0);
       }`,
     fragmentShader: /* glsl */ `
       varying vec3 vWPos;
+      varying float vPhase;
+      varying float vFlat;
+      varying float vOblate;
+      varying float vCover;
       ${WATER_GLSL}
       void main() {
-        vec2 c = gl_PointCoord - 0.5;
-        float d = length(c) * 2.0;
+        vec2 c = (gl_PointCoord - 0.5) * 2.3;
+        c.y = -c.y;
+        // basıklık ve yalpalama
+        float asp = 1.0 + vOblate * (0.28 + 0.12 * sin(vPhase * 2.0)) + vFlat * 0.5;
+        vec2 e = vec2(c.x * (1.0 + vOblate * 0.05 * sin(vPhase * 3.0 + c.y * 2.0)), c.y * asp);
+        float d = length(e);
         if (d > 1.0) discard;
-        float rim = smoothstep(0.65, 1.0, d) * (1.0 - smoothstep(0.92, 1.0, d));
-        float hl = smoothstep(0.28, 0.0, length(c - vec2(-0.16, -0.16)));
-        vec3 lamp = uLampColor * (0.15 + uLamp);
-        vec3 col = lamp * (rim * 0.9 + hl * 1.6) + vec3(0.6, 0.8, 0.85) * 0.05;
-        float a = rim * 0.75 + hl * 0.9 + 0.05;
-        float fade = exp(-waterPath(vWPos) * 0.01);
-        gl_FragColor = vec4(col * fade, a * fade);
+        if (vFlat > 0.5 && c.y < -0.15) discard; // yüzeydeki kabarcığın yalnızca kubbesi
+        vec3 lamp = uLampColor * (0.08 + uLamp);
+        float light = causticAt(vWPos).g;
+        float top = clamp(0.5 + 0.6 * e.y, 0.0, 1.0);
+        // kenarda tam iç yansıma: gümüşi halka; ortası saydam
+        float rim = smoothstep(0.5, 0.93, d) * (1.0 - smoothstep(0.96, 1.0, d) * 0.5);
+        float hl = smoothstep(0.26, 0.0, length(e - vec2(-0.22, 0.48)));
+        float focus = smoothstep(0.32, 0.0, length(e - vec2(0.08, -0.55)));
+        vec3 col = lamp * light * (rim * (0.25 + 0.9 * top) + hl * 2.4 + focus * 0.7);
+        col += vec3(0.55, 0.75, 0.8) * 0.03 * rim;
+        float a = (rim * 0.8 + hl * 0.9 + focus * 0.4 + 0.05) * vCover;
+        vec3 T = exp(-waterSigma() * waterPath(vWPos));
+        col = col * T + waterInscatter() * (1.0 - T) * 0.2;
+        gl_FragColor = vec4(col, a * (0.4 + 0.6 * dot(T, vec3(0.333))));
       }`,
     transparent: true,
     depthWrite: false,
@@ -107,39 +141,70 @@ export function createBubbles(source, max = 260) {
 
   const parts = [];
   let acc = 0;
+  const top = TANK.water;
   pts.userData.enabled = true;
+  pts.userData.onPop = null;
+  // Piksel boyutu o an çizilen hedefe göre (ana görüntü, yansıma, ayna)
+  const _sz = new THREE.Vector2();
+  pts.onBeforeRender = (renderer, scene, camera) => {
+    const rt = renderer.getRenderTarget();
+    const h = rt ? rt.height : renderer.getDrawingBufferSize(_sz).y;
+    mat.uniforms.uScale.value = h * camera.projectionMatrix.elements[5] / 2;
+  };
+  const pop = (b) => { if (pts.userData.onPop) pts.userData.onPop(b.x, b.z, b.r); };
+
   pts.userData.update = (dt, flowX = 0) => {
+    const rnd = Math.random;
     if (pts.userData.enabled) {
-      acc += dt * 26;
+      acc += dt * 75;
       while (acc > 1 && parts.length < max) {
         acc -= 1;
+        // çoğu milimetrik, arada iri bir kabarcık
+        const r = 0.03 + rnd() ** 3 * 0.17 + (rnd() < 0.03 ? 0.08 : 0);
+        const a = rnd() * 6.283, rr = Math.sqrt(rnd()) * 0.9;
         parts.push({
-          x: source.x + (Math.random() - 0.5) * 1.6,
-          y: source.y,
-          z: source.z + (Math.random() - 0.5) * 0.8,
-          s: 0.12 + Math.random() ** 2 * 0.35,
-          ph: Math.random() * 6.28,
-          v: 0,
+          x: source.x + Math.cos(a) * rr, y: source.y, z: source.z + Math.sin(a) * rr * 0.6,
+          r, ph: rnd() * 6.28, v: 0, vx: 0, vz: 0, surf: false, life: 0,
+          zig: THREE.MathUtils.smoothstep(r, 0.07, 0.16) * (4 + rnd() * 4),
+          vt: Math.min(25, 9 + r * 170) * (0.9 + rnd() * 0.2),
         });
       }
     }
     for (let i = parts.length - 1; i >= 0; i--) {
       const b = parts[i];
-      b.v = Math.min(b.v + dt * 60, 14 + b.s * 25);
+      if (b.surf) {
+        b.life -= dt;
+        b.x += b.vx * dt; b.z += b.vz * dt;
+        b.vx *= 1 - dt * 1.2; b.vz *= 1 - dt * 1.2;
+        if (b.life <= 0) { pop(b); parts.splice(i, 1); }
+        continue;
+      }
+      b.v += (b.vt - b.v) * Math.min(1, dt * 18);
       b.y += b.v * dt;
-      b.ph += dt * (8 + b.s * 10);
-      b.x += Math.sin(b.ph) * dt * 2.2 + flowX * dt;
-      b.z += Math.cos(b.ph * 0.8) * dt * 1.6;
-      b.s *= 1 + dt * 0.06;
-      if (b.y > TANK.water - 0.1) parts.splice(i, 1);
+      b.ph += dt * (7 + b.r * 20);
+      // tüy (plume) yükseldikçe genişler
+      b.vx += (rnd() - 0.5) * dt * 26; b.vz += (rnd() - 0.5) * dt * 20;
+      b.vx *= 1 - dt * 1.4; b.vz *= 1 - dt * 1.4;
+      b.x += (b.vx + Math.cos(b.ph) * b.zig + flowX) * dt;
+      b.z += (b.vz + Math.sin(b.ph * 0.7) * b.zig * 0.5) * dt;
+      if (b.y > top - b.r * 0.5) {
+        if (b.r > 0.055 && rnd() < 0.75) {
+          b.surf = true;
+          b.y = top - b.r * 0.35;
+          b.life = 0.12 + rnd() ** 2 * 1.6;
+          const ang = Math.atan2(b.z - source.z, b.x - source.x) + (rnd() - 0.5);
+          b.vx = Math.cos(ang) * (2 + rnd() * 4); b.vz = Math.sin(ang) * (2 + rnd() * 4);
+        } else { pop(b); parts.splice(i, 1); }
+      }
     }
     for (let i = 0; i < max; i++) {
       const b = parts[i];
-      if (b) { pos[i * 3] = b.x; pos[i * 3 + 1] = b.y; pos[i * 3 + 2] = b.z; size[i] = b.s; }
-      else size[i] = 0;
+      if (b) {
+        pos[i * 3] = b.x; pos[i * 3 + 1] = b.y; pos[i * 3 + 2] = b.z;
+        size[i] = b.r; phase[i] = b.ph; flat[i] = b.surf ? 1 : 0;
+      } else size[i] = 0;
     }
-    geo.attributes.position.needsUpdate = true;
-    geo.attributes.aSize.needsUpdate = true;
+    for (const k of ['position', 'aSize', 'aPhase', 'aFlat']) geo.attributes[k].needsUpdate = true;
     geo.setDrawRange(0, Math.max(parts.length, 1));
   };
   return pts;

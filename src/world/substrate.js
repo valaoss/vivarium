@@ -4,6 +4,7 @@ import { TANK, HALF_W, HALF_D } from '../config.js';
 import { patchUnderwater } from '../render/water.js';
 import { fbm3, noise3, mulberry } from '../render/textures.js';
 import { pbrSet, triplanarHook } from '../render/assets.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 // Kum yüksekliği: arkaya doğru yükselen klasik akvaskep eğimi + yumuşak tepecikler
 export function sandHeight(x, z) {
@@ -167,7 +168,44 @@ function createRocks(group) {
     group.add(rock);
     obstacles.push({ pos: new THREE.Vector3(d.x, base + d.sy * 0.4, d.z), r: Math.max(d.sx, d.sz) * 1.05, top: base + d.sy * 1.05, mesh: rock });
   }
+  loadScannedRocks(obstacles.map((o) => o.mesh));
   return obstacles;
+}
+
+// Poly Haven taş taramaları (CC0) yüklenince prosedürel taşların yerini alır
+function loadScannedRocks(meshes) {
+  const base = `${import.meta.env.BASE_URL}models/hardscape/`;
+  const loader = new GLTFLoader();
+  const names = ['rock_07', 'rock_09'];
+  const loaded = {};
+  names.forEach((name) => {
+    loader.load(`${base}${name}/${name}_1k.gltf`, (gltf) => {
+      let src = null;
+      gltf.scene.traverse((o) => { if (o.isMesh && !src) src = o; });
+      if (!src) return;
+      const geo = src.geometry.clone();
+      geo.applyMatrix4(src.matrixWorld);
+      // Birim kutuya oturt: x,z -1..1, taban -0.35, tepe 1.0 (prosedürel taşla aynı)
+      geo.computeBoundingBox();
+      const bb = geo.boundingBox;
+      const c = bb.getCenter(new THREE.Vector3());
+      const sz = bb.getSize(new THREE.Vector3());
+      geo.translate(-c.x, -bb.min.y, -c.z);
+      geo.scale(2 / sz.x, 1.35 / sz.y, 2 / sz.z);
+      geo.translate(0, -0.35, 0);
+      geo.computeBoundingSphere();
+      const m = src.material.clone();
+      m.color = new THREE.Color(0.92, 0.94, 0.97);
+      patchUnderwater(m, { key: 'rock-scan' });
+      loaded[name] = { geo, mat: m };
+      meshes.forEach((mesh, i) => {
+        if (names[i % names.length] !== name) return;
+        mesh.geometry.dispose();
+        mesh.geometry = geo;
+        mesh.material = m;
+      });
+    });
+  });
 }
 
 // Dallanan kök (driftwood)

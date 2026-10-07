@@ -1,9 +1,11 @@
 import * as THREE from 'three';
 import { MOBILE, TANK, HALF_W, HALF_D, LIGHT_ON_HOUR, LIGHT_OFF_HOUR, OFFLINE_CAP_MIN, GAME_MIN_PER_SEC } from '../config.js';
 import { createRenderer, createCamera, createControls, createRoom } from '../render/scene.js';
-import { WU, SURFACE_U, createWaterVolume, createWaterSurface, createMeniscus, createGodRays } from '../render/water.js';
+import { WU, createWaterVolume, createWaterSurface, createMeniscus, createGodRays } from '../render/water.js';
 import { createTank, ALGAE_GRID } from '../render/glass.js';
-import { PlanarReflection } from '../render/reflection.js';
+import { PlanarReflection, PlaneMirror } from '../render/reflection.js';
+import { MIRROR_U } from '../render/glass.js';
+import { WaterSim } from '../render/waterSim.js';
 import { createDust, createBubbles, createFoodMesh } from '../render/particles.js';
 import { createPostFX } from '../render/postfx.js';
 import { createSubstrate, sandHeight } from '../world/substrate.js';
@@ -35,6 +37,8 @@ export class Game {
     this.substrate = createSubstrate(this.scene);
     this.plants = createPlants(this.scene);
 
+    this.waterSim = new WaterSim(this.renderer);
+    this.waterSim.sources.filter = this.substrate.equipment.filterOut;
     this.scene.add(createWaterVolume());
     this.reflection = new PlanarReflection(this.renderer, this.scene, TANK.water, { scale: MOBILE ? 0.3 : 0.4 });
     if (location.search.includes('norefl')) this.reflection.uniforms.uReflOn.value = 0;
@@ -47,6 +51,7 @@ export class Game {
     this.dust = createDust(MOBILE ? 350 : 700);
     this.scene.add(this.dust);
     this.bubbles = createBubbles(this.substrate.equipment.airstone);
+    this.bubbles.userData.onPop = (x, z, r) => this.waterSim.drop(x, z, 0.3 + r * 3, 0.01 + r * 0.12);
     this.scene.add(this.bubbles);
     this.foodMesh = createFoodMesh();
     this.scene.add(this.foodMesh);
@@ -61,6 +66,13 @@ export class Game {
     this.ghost.renderOrder = 20;
     this.scene.add(this.ghost);
     this.reflection.hide(this.surface, meniscus, this.ghost, this.godrays, this.dust);
+    // Yan camlardaki tam iç yansıma: kameranın baktığı camın iki komşu camı ayna olur
+    this.mirrors = [0, 1].map(() => new PlaneMirror(this.renderer, this.scene, { scale: MOBILE ? 0.22 : 0.3 }));
+    for (const m of this.mirrors) m.hide(...this.tank.panels, meniscus, this.ghost, this.godrays, this.dust);
+    MIRROR_U.tMir0.value = this.mirrors[0].target.texture;
+    MIRROR_U.tMir1.value = this.mirrors[1].target.texture;
+    if (location.search.includes('notir')) this.mirrors.length = 0;
+    this.mirrorFrame = 0;
 
     this.fx = createPostFX(this.renderer, this.scene, this.camera);
 
@@ -395,7 +407,8 @@ export class Game {
         eaten: false,
       });
     }
-    SURFACE_U.uRipple.value.set(x, z, WU.uTime.value, 1);
+    this.waterSim.drop(x, z, 1.4, 0.09);
+    for (const f of this.food.slice(-n)) this.waterSim.drop(f.pos.x, f.pos.z, 0.45, 0.025);
     this.sfx('feed');
     this.state.counters.fed++;
     for (const s of Object.values(this.school)) s.excite = 1;
@@ -788,6 +801,7 @@ export class Game {
     this.renderer.setSize(w, h);
     this.fx.setSize(w, h);
     this.reflection.setSize(w, h);
+    for (const m of this.mirrors) m.setSize(w, h);
     this.fitTank();
   }
 
@@ -866,7 +880,13 @@ export class Game {
     // Kabarcıklar ve hava taşı
     this.bubbles.userData.enabled = this.state.airstone;
     this.bubbles.userData.update(dt, 0);
-    SURFACE_U.uBubbleSrc.value.z = THREE.MathUtils.lerp(SURFACE_U.uBubbleSrc.value.z, this.state.airstone ? 1 : 0, 0.05);
+    // yüzeye yakın yüzen balıklar ve yüzen yemler suyu kıpırdatır
+    for (const c of this.creatures) {
+      if (c.pos.y > TANK.water - 1.6 && Math.random() < dt * 14) {
+        this.waterSim.drop(c.pos.x, c.pos.z, 0.5 + (c.sp.size ?? 3) * 0.12, -0.012 - Math.random() * 0.012);
+      }
+    }
+    this.waterSim.update(dt);
     this.godrays.userData.update(this.camera, this.time);
 
     if (this.algaeDirty && Math.floor(this.time * 10) % 2 === 0) {
@@ -891,7 +911,30 @@ export class Game {
 
   renderFrame() {
     this.reflection.update(this.camera);
+    this.updateMirrors();
     this.fx.render(this.time);
+  }
+
+  updateMirrors() {
+    if (!this.mirrors.length) return;
+    const c = this.camera.position;
+    const g = TANK.glass * 0.5;
+    // Kamera hangi camdan bakıyor? Ona dik iki cam ayna olur.
+    const alongZ = Math.abs(c.z) / HALF_D > Math.abs(c.x) / HALF_W;
+    const planes = alongZ
+      ? [[new THREE.Vector3(1, 0, 0), new THREE.Vector3(-HALF_W - g, 0, 0)], [new THREE.Vector3(-1, 0, 0), new THREE.Vector3(HALF_W + g, 0, 0)]]
+      : [[new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, -HALF_D - g)], [new THREE.Vector3(0, 0, -1), new THREE.Vector3(0, 0, HALF_D + g)]];
+    this.mirrorFrame++;
+    planes.forEach(([n, p], i) => {
+      // Telefonda iki ayna sırayla güncellenir
+      const cam = c.clone().sub(p).dot(n) > 0;
+      MIRROR_U['uMirOn' + i].value = cam ? 1 : 0;
+      if (!cam || (MOBILE && this.mirrorFrame % 2 !== i)) return;
+      const m = this.mirrors[i];
+      m.update(this.camera, n, p);
+      MIRROR_U['uMirMat' + i].value.copy(m.textureMatrix);
+      MIRROR_U['uMirPlane' + i].value.set(n.x, n.y, n.z, n.dot(p));
+    });
   }
 
   glassAlgae() {

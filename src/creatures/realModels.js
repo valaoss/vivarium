@@ -13,12 +13,40 @@ import { SPECIES } from './species.js';
 export const REAL_FISH = {};
 if (typeof window !== "undefined") window.__REAL_FISH = REAL_FISH;
 
+// axis: modelin boy ekseni ('x' | 'z'); flip: burun eksi yöndeyse
 const SOURCES = {
   neon: {
+    species: 'neon', axis: 'z',
     url: 'models/fish/neon/scene.gltf',
     credit: '“Paracheirodon Innesi _ Tetra Neon” — BlueMesh (CC-BY 4.0)',
   },
+  guppy: {
+    species: 'guppy', axis: 'z', flip: true,
+    url: 'models/creatures/guppy.glb',
+    credit: '“Guppy Fish” — BlueMesh (CC-BY 4.0)',
+  },
+  guppy_f: {
+    species: 'guppy', axis: 'z',
+    url: 'models/creatures/guppy_female.glb',
+    credit: '“Guppy ♀” — Nestaeric (CC-BY 4.0)',
+  },
+  betta: {
+    species: 'betta', axis: 'z',
+    url: 'models/creatures/betta.glb',
+    credit: '“Betta Splendens” — BlueMesh (CC-BY 4.0)',
+  },
+  swordtail: {
+    species: 'swordtail', axis: 'x', flip: true, exclude: ['Material.001'],
+    url: 'models/creatures/swordtail.glb',
+    credit: '“CC0 Green Swordtail, Xiphophorus helleri” — ffishAsia & floraZia (CC0)',
+  },
 };
+
+/** Bir balık için kullanılacak model anahtarı (yoksa null → prosedürel) */
+export function realModelKey(species, sex) {
+  if (species === 'guppy' && sex === 'f' && REAL_FISH.guppy_f) return 'guppy_f';
+  return REAL_FISH[species] ? species : null;
+}
 
 export function loadRealFish() {
   const loader = new GLTFLoader();
@@ -36,10 +64,14 @@ function prepare(gltf, key, src) {
   const parts = [];
   gltf.scene.traverse((o) => {
     if (!o.isMesh) return;
+    if (src.exclude?.includes(o.material?.name)) return;
     const g = new THREE.BufferGeometry();
     for (const name of ['position', 'normal', 'uv']) if (o.geometry.attributes[name]) g.setAttribute(name, o.geometry.attributes[name].clone());
     if (o.geometry.index) g.setIndex(o.geometry.index.clone());
     g.applyMatrix4(o.matrixWorld);
+    // boy ekseni +Z (burun) olacak şekilde döndür
+    if (src.axis === 'x') g.rotateY(-Math.PI / 2);
+    if (src.flip) g.rotateY(Math.PI);
     parts.push({ name: o.name, geo: g, material: o.material });
   });
   // En büyük parça gövde; ekseni ve baş yönünü ona göre belirle
@@ -48,7 +80,7 @@ function prepare(gltf, key, src) {
   for (const p of parts) { p.geo.computeBoundingBox(); box.union(p.geo.boundingBox); }
   const center = box.getCenter(new THREE.Vector3());
   const size = box.getSize(new THREE.Vector3());
-  const b = SPECIES[key].body;
+  const b = SPECIES[src.species].body;
   const total = b.length + b.tailLen;
   const scale = total / size.z;
   for (const p of parts) {
@@ -89,7 +121,10 @@ const REAL_FRAG = /* glsl */ `
 export function makeRealFishMeshes(key, fishUniforms) {
   const real = REAL_FISH[key];
   return real.parts.map((p) => {
-    const m = p.material.clone();
+    // Fotogrametri taramaları ışıksız (unlit) gelir: sahne ışığını alsın
+    const m = p.material.isMeshBasicMaterial
+      ? new THREE.MeshStandardMaterial({ map: p.material.map, roughness: 0.55, metalness: 0 })
+      : p.material.clone();
     m.side = THREE.DoubleSide;
     m.transparent = true;
     m.depthWrite = true;

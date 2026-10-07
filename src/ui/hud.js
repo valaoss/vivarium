@@ -5,7 +5,7 @@ import { SHRIMP_LABEL } from '../creatures/Shrimp.js';
 import { SNAIL_LABEL } from '../creatures/Snail.js';
 import { QUESTS, currentQuest } from '../game/quests.js';
 import { quality } from '../sim/ecosystem.js';
-import { REAL_FISH } from '../creatures/realModels.js';
+import { REAL_FISH, realModelKey } from '../creatures/realModels.js';
 
 const I = {
   eye: '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
@@ -294,7 +294,8 @@ export function createHUD(game, root, sound) {
     if (full) {
       card.querySelector('.cname').textContent = d.name;
       card.querySelector('.csp').innerHTML = `${sp.name} · <i>${sp.latin}</i>`;
-      const credit = REAL_FISH[d.species] ? `<br><span class="muted credit">3D model: ${REAL_FISH[d.species].credit}</span>` : '';
+      const rk = realModelKey(d.species, d.sex);
+      const credit = rk ? `<br><span class="muted credit">3D model: ${REAL_FISH[rk].credit}</span>` : '';
       card.querySelector('.ctrait').innerHTML = `<b>${d.trait}</b> — ${TRAIT_INFO[d.trait] ?? ''}<br><span class="muted">Beslenme: ${sp.diet}</span>${credit}`;
     }
     const st = (STATE_LABEL[c.state] ?? SHRIMP_LABEL[c.state] ?? SNAIL_LABEL[c.state]) ?? '';
