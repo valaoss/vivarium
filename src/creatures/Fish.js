@@ -6,6 +6,9 @@ import { makeFishMaterials, makeFishUniforms } from './fishMaterial.js';
 import { sandHeight } from '../world/substrate.js';
 
 const GEO_CACHE = {};
+const BETTA_PALETTES = [
+  [0x8a0410, 0x2050ff], [0x10209a, 0x30d0ff], [0xb01030, 0xffffff], [0x3a0a6a, 0xff3090], [0xd04008, 0xffd040],
+];
 const GUPPY_PALETTES = [
   [0xff6a1a, 0x2a5cff], [0xff2a3a, 0xffb020], [0x2fa8ff, 0x9a3cff], [0xffd23a, 0xff3a2a], [0x18d6a0, 0x1f5cff], [0xff5aa0, 0xffd0e0],
 ];
@@ -16,6 +19,7 @@ const _x = new THREE.Vector3(), _y = new THREE.Vector3(), _q = new THREE.Quatern
 export const STATE_LABEL = {
   wander: 'Dolaşıyor', school: 'Sürüyle yüzüyor', seek: 'Yem arıyor', eat: 'Yiyor', flee: 'Kaçıyor',
   sleep: 'Uyuyor', air: 'Yüzeyden hava alıyor', hide: 'Saklanıyor', forage: 'Kumu eşeliyor', curious: 'Seni izliyor', rest: 'Dinleniyor',
+  chase: 'Rakibini kovalıyor', flare: 'Yüzgeçlerini açıp gösteriş yapıyor', hunt: 'Avlanıyor',
 };
 
 export class Fish {
@@ -30,13 +34,15 @@ export class Fish {
         belly: data.species === 'cory' ? 0.02 : 0.07,
         flatBelly: data.species === 'cory',
         barbels: data.species === 'cory',
-        eyeSize: data.species === 'neon' ? 0.165 : data.species === 'cory' ? 0.12 : 0.14,
-        tailLift: data.species === 'guppy' ? 0.15 : 0,
+        eyeSize: b.eyeSize ?? (data.species === 'neon' ? 0.165 : data.species === 'cory' ? 0.12 : 0.14),
+        tailLift: b.tailLift ?? (data.species === 'guppy' ? 0.15 : 0),
+        ventral: data.species === 'angel' ? 4 : 1,
       });
     }
     const geo = GEO_CACHE[data.species];
     this.total = geo.total * scale;
-    const pal = GUPPY_PALETTES[(data.palette ?? 0) % GUPPY_PALETTES.length];
+    const pals = data.species === 'betta' ? BETTA_PALETTES : GUPPY_PALETTES;
+    const pal = pals[(data.palette ?? 0) % pals.length];
     this.u = makeFishUniforms(geo.total, this.sp.pattern, b.length / geo.total, pal[0], pal[1], data.seed ?? Math.random() * 100);
     const mats = makeFishMaterials(this.u);
 
@@ -51,7 +57,7 @@ export class Fish {
 
     // Gözler: parlak siyah göz bebeği + renkli iris halkası
     const eyeMat = new THREE.MeshPhysicalMaterial({ color: 0x020203, roughness: 0.05, clearcoat: 1, clearcoatRoughness: 0 });
-    const irisCol = data.species === 'neon' ? 0x6f8fa8 : data.species === 'cory' ? 0x9a7430 : 0x8a8a80;
+    const irisCol = { neon: 0x6f8fa8, cory: 0x9a7430, angel: 0xa02818, danio: 0xb0a070 }[data.species] ?? 0x8a8a80;
     const irisMat = new THREE.MeshStandardMaterial({ color: irisCol, metalness: 0.6, roughness: 0.3 });
     for (const s of [-1, 1]) {
       const e = new THREE.Mesh(new THREE.SphereGeometry(geo.eye.r, 14, 10), eyeMat);
@@ -78,6 +84,9 @@ export class Fish {
     this.airTimer = 40 + Math.random() * 80;
     this.airPhase = 0;
     this.restTimer = 0;
+    this.aggroTimer = 3 + Math.random() * 5;
+    this.aggro = 0;
+    this.prey = null;
     this.pickTarget({ night: 0 });
   }
 
@@ -147,6 +156,27 @@ export class Fish {
       if (this.airTimer < 0 && night < 0.5) { this.airPhase = 1; this.airTimer = 60 + Math.random() * 120; world.events.push({ type: 'coryAir', fish: this }); }
       if (this.airPhase > 0) state = 'air';
     }
+    // Bölgecilik (beta) ve avlanma (melek balığı)
+    if (state !== 'flee' && state !== 'seek' && night < 0.6) {
+      this.aggroTimer -= dt;
+      if (this.aggro <= 0 && this.aggroTimer < 0) {
+        this.aggroTimer = sp.predator ? 18 + Math.random() * 25 : 4 + Math.random() * 6;
+        const rule = sp.territorial ?? sp.predator;
+        if (rule && (!sp.predator || d.hunger > 30)) {
+          let best = null, bd = rule.range;
+          for (const o of world.fish) {
+            if (o === this || !(rule.targets ?? rule.prey).includes(o.species)) continue;
+            const dd = o.pos.distanceTo(pos);
+            if (dd < bd) { bd = dd; best = o; }
+          }
+          if (best) { this.prey = best; this.aggro = sp.predator ? 4 : 3; }
+        }
+      }
+    }
+    if (this.aggro > 0 && this.prey && world.fish.includes(this.prey) && state !== 'flee') {
+      this.aggro -= dt;
+      state = sp.predator ? 'hunt' : this.prey.species === this.species ? 'flare' : 'chase';
+    } else { this.aggro = 0; this.prey = null; }
     this.state = state;
 
     // --- Yönlendirme ---
@@ -187,6 +217,34 @@ export class Fish {
           seekTo(_v2, 1.5);
           speed = sp.cruise * 0.7;
         }
+        break;
+      }
+      case 'chase':
+      case 'flare':
+      case 'hunt': {
+        const p = this.prey;
+        seekTo(p.pos, 2.5);
+        const dist = p.pos.distanceTo(pos);
+        speed = state === 'flare' ? (dist < 4 ? 0.8 : sp.cruise * 1.5) : sp.burst * (state === 'hunt' ? 0.7 : 0.6);
+        maxTurn = 6;
+        if (state === 'flare') {
+          // iki erkek beta: yüzgeçler gerilir, yan yana gösteriş
+          this.u.uFlap.value += dt * 10;
+          if (dist < 5 && !this.flared) { this.flared = true; world.events.push({ type: 'flare', fish: this }); }
+          if (dist < 4) { p.data.stress = Math.min(100, p.data.stress + dt * 6); d.stress = Math.min(100, d.stress + dt * 3); }
+        } else if (dist < 6 && !(p.flee > 0)) p.scare?.(pos, state === 'hunt' ? 1.2 : 0.8);
+        if (state === 'chase' && dist < 1.5 && !this.nipped) {
+          this.nipped = true;
+          p.data.stress = Math.min(100, p.data.stress + 15);
+          p.data.health = Math.max(0, p.data.health - 2);
+          world.events.push({ type: 'nip', fish: this, target: p });
+        }
+        if (state === 'hunt' && dist < 1.3 && Math.random() < dt * 2) {
+          world.events.push({ type: 'predation', fish: this, target: p });
+          d.hunger = Math.max(0, d.hunger - 30);
+          this.aggro = 0;
+        }
+        if (this.aggro <= dt) { this.nipped = false; this.flared = false; }
         break;
       }
       case 'sleep':
@@ -287,6 +345,7 @@ export class Fish {
     this.bend = THREE.MathUtils.lerp(this.bend, THREE.MathUtils.clamp(-this.yawRate * 0.09, -0.35, 0.35), 0.15);
     this.u.uBend.value = this.bend;
     this.u.uFlap.value += dt * (spd < 1.5 ? 11 : 4);
+    this.u.uIch.value = THREE.MathUtils.lerp(this.u.uIch.value, d.ich ?? 0, 0.05);
     this.u.uPale.value = THREE.MathUtils.lerp(this.u.uPale.value, Math.max((100 - d.health) / 100, d.stress / 160), 0.05);
 
     // Dönüşüm

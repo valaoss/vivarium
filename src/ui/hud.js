@@ -1,7 +1,8 @@
-import { SPECIES, TRAIT_INFO } from '../creatures/species.js';
+import { SPECIES, TRAIT_INFO, compatWarnings } from '../creatures/species.js';
 import { PLANT_TYPES } from '../world/plants.js';
 import { STATE_LABEL } from '../creatures/Fish.js';
 import { SHRIMP_LABEL } from '../creatures/Shrimp.js';
+import { SNAIL_LABEL } from '../creatures/Snail.js';
 import { QUESTS, currentQuest } from '../game/quests.js';
 import { quality } from '../sim/ecosystem.js';
 
@@ -22,6 +23,9 @@ const I = {
   moon: '<path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"/>',
   sound: '<path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/>',
   mute: '<path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M17 9l5 6M22 9l-5 6"/>',
+  leaf: '<path d="M5 19c0-8 5-14 15-15-1 10-7 15-15 15z"/><path d="M5 19c3-4 6-7 10-9"/>',
+  pill: '<rect x="3" y="9" width="18" height="7" rx="3.5" transform="rotate(-35 12 12.5)"/><path d="M10 8.5l4 6"/>',
+  warn: '<path d="M12 3l10 18H2z"/><path d="M12 10v5M12 18v.5"/>',
   temp: '<path d="M14 14.8V4a2 2 0 0 0-4 0v10.8a4 4 0 1 0 4 0z"/>',
 };
 const icon = (n, cls = '') => `<svg class="ic ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${I[n]}</svg>`;
@@ -34,6 +38,8 @@ export function createHUD(game, root, sound) {
   const top = h(`
     <div class="topbar glass">
       <div class="clock"><span class="day"></span><span class="time"></span><span class="lt"></span></div>
+      <div class="sep"></div>
+      <div class="lvl" title="Doğa Seviyesi">${icon('leaf')}<span></span><div class="bar"><i></i></div></div>
       <div class="sep"></div>
       <div class="meter" data-k="q" title="Su kalitesi">${icon('water')}<div class="bar"><i></i></div></div>
       <div class="meter" data-k="o2" title="Oksijen">${icon('air')}<div class="bar"><i></i></div></div>
@@ -94,6 +100,7 @@ export function createHUD(game, root, sound) {
     <div class="card glass hidden">
       <div class="chead"><div><div class="cname"></div><div class="csp"></div></div><div class="mood"></div></div>
       <div class="cstate"></div>
+      <div class="cdisease hidden"><span></span><button class="treat">${icon('pill', 'sm')}<span>Tedavi et · 12</span></button></div>
       <div class="cbars">
         <label>Tokluk</label><div class="bar"><i data-b="food"></i></div>
         <label>Sağlık</label><div class="bar"><i data-b="health"></i></div>
@@ -158,18 +165,29 @@ export function createHUD(game, root, sound) {
     items.innerHTML = '';
     const list = shopTab === 'creature' ? Object.entries(SPECIES) : Object.entries(PLANT_TYPES);
     for (const [key, it] of list) {
-      const locked = shopTab === 'creature' && !game.state.unlocked[key];
+      const locked = shopTab === 'creature' && !game.isUnlocked(key);
       const unlockQuest = QUESTS.find((q) => q.unlock === key);
+      const lockText = [it.level ? `Doğa Seviyesi ${it.level}` : '', unlockQuest ? `“${unlockQuest.title}” görevi` : ''].filter(Boolean).join(' veya ');
+      const warns = shopTab === 'creature' && !locked ? compatWarnings(key, game.counts()) : [];
       const el = h(`
         <div class="item ${locked ? 'locked' : ''}">
           <div class="swatch sw-${key}"></div>
           <div class="info">
             <div class="iname">${it.name}${it.latin ? ` <i>${it.latin}</i>` : ''}</div>
-            <div class="idesc">${locked ? `${icon('lock', 'sm')} “${unlockQuest?.title}” görevini tamamlayınca açılır.` : it.desc}</div>
+            <div class="idesc">${locked ? `${icon('lock', 'sm')} ${lockText} ile açılır.` : it.desc}</div>
+            ${warns.map((w) => `<div class="iwarn">${icon('warn', 'sm')} ${w}</div>`).join('')}
           </div>
           <button class="buy" ${locked ? 'disabled' : ''}>${icon('coin', 'sm')}${it.price}</button>
         </div>`);
-      el.querySelector('.buy').addEventListener('click', () => {
+      el.querySelector('.buy').addEventListener('click', (ev) => {
+        const btn = ev.currentTarget;
+        // uyumsuz türlerde ikinci tıklamayla onay
+        if (warns.some((w) => !w.includes('sürü balığıdır')) && !btn.dataset.ok) {
+          btn.dataset.ok = '1';
+          btn.innerHTML = 'Yine de al';
+          btn.classList.add('confirm');
+          return;
+        }
         if (game.buy(shopTab === 'creature' ? 'creature' : 'plant', key)) {
           if (shopTab === 'plant') shop.classList.add('hidden');
           renderShop();
@@ -201,6 +219,7 @@ export function createHUD(game, root, sound) {
   window.addEventListener('keydown', (e) => { if (e.key === ' ' && game.photo) flash.classList.remove('go'), void flash.offsetWidth, flash.classList.add('go'); });
 
   card.querySelector('.x').addEventListener('click', () => game.select(null));
+  card.querySelector('.treat').addEventListener('click', () => { game.treat(game.selected); updateCard(false); });
   card.querySelector('.follow').addEventListener('click', () => {
     game.follow = !game.follow;
     card.querySelector('.follow span').textContent = game.follow ? 'Takibi bırak' : 'Takip et';
@@ -276,7 +295,13 @@ export function createHUD(game, root, sound) {
       card.querySelector('.csp').innerHTML = `${sp.name} · <i>${sp.latin}</i>`;
       card.querySelector('.ctrait').innerHTML = `<b>${d.trait}</b> — ${TRAIT_INFO[d.trait] ?? ''}<br><span class="muted">Beslenme: ${sp.diet}</span>`;
     }
-    const st = (STATE_LABEL[c.state] ?? SHRIMP_LABEL[c.state]) ?? '';
+    const st = (STATE_LABEL[c.state] ?? SHRIMP_LABEL[c.state] ?? SNAIL_LABEL[c.state]) ?? '';
+    const dz = card.querySelector('.cdisease');
+    dz.classList.toggle('hidden', !d.ich);
+    if (d.ich) {
+      dz.querySelector('span').textContent = d.treating ? `Beyaz benek · tedavi ediliyor (%${Math.round(d.ich * 100)})` : `Beyaz benek hastalığı (%${Math.round(d.ich * 100)})`;
+      dz.querySelector('.treat').classList.toggle('hidden', !!d.treating);
+    }
     card.querySelector('.cstate').textContent = st;
     card.querySelector('[data-b="food"]').style.width = `${100 - d.hunger}%`;
     card.querySelector('[data-b="health"]').style.width = `${d.health}%`;
@@ -310,6 +335,8 @@ export function createHUD(game, root, sound) {
       setMeter('o2', s.water.o2);
       top.querySelector('.temp span').textContent = `${s.water.temp.toFixed(1)}°C`;
       top.querySelector('.coins span').textContent = s.coins;
+      top.querySelector('.lvl span').textContent = `Sv ${game.level}`;
+      top.querySelector('.lvl i').style.width = `${Math.round(game.levelProgress() * 100)}%`;
       tools.querySelector('[data-act="air"]').classList.toggle('on', s.airstone);
       tools.querySelector('[data-act="light"]').classList.toggle('on', game.lightOn());
       speed.querySelectorAll('button').forEach((b) => b.classList.toggle('on', +b.dataset.s === game.speed));

@@ -8,9 +8,10 @@ import { createDust, createBubbles, createFoodMesh } from '../render/particles.j
 import { createPostFX } from '../render/postfx.js';
 import { createSubstrate, sandHeight } from '../world/substrate.js';
 import { createPlants, PLANT_TYPES } from '../world/plants.js';
-import { SPECIES, NAMES } from '../creatures/species.js';
+import { SPECIES, NAMES, levelFromXp, xpForLevel } from '../creatures/species.js';
 import { Fish } from '../creatures/Fish.js';
 import { Shrimp } from '../creatures/Shrimp.js';
+import { Snail } from '../creatures/Snail.js';
 import { FISH_SHARED } from '../creatures/fishMaterial.js';
 import { newWater, tick, quality, turbidity, waterChange } from '../sim/ecosystem.js';
 import { QUESTS, currentQuest } from './quests.js';
@@ -77,11 +78,7 @@ export class Game {
     this.simAcc = 0;
     this.lightLevel = 1;
     this.listeners = {};
-    this.school = {
-      neon: { target: new THREE.Vector3(0, 18, 0), timer: 0, excite: 0 },
-      guppy: { target: new THREE.Vector3(0, 25, 0), timer: 0, excite: 0 },
-      cory: { target: new THREE.Vector3(0, 3, 0), timer: 0, excite: 0 },
-    };
+    this.school = Object.fromEntries(Object.entries(SPECIES).filter(([, sp]) => sp.depth).map(([k]) => [k, { target: new THREE.Vector3(0, 18, 0), timer: 0, excite: 0 }]));
     this.obstacles = [...this.substrate.rocks, ...this.substrate.wood, ...this.substrate.equipment.obstacles];
 
     this.algaeGrid = new Float32Array(ALGAE_GRID.w * ALGAE_GRID.h);
@@ -118,6 +115,7 @@ export class Game {
       counters: { fed: 0, planted: 0, inspected: 0, wiped: 0, waterChanges: 0, photos: 0, healthyMin: 0, taps: 0 },
       discoveries: [],
       unlocked: { guppy: true, neon: true, cory: false, shrimp: false },
+      xp: 0,
       algae: null,
       savedAt: Date.now(),
       firstRun: true,
@@ -130,6 +128,8 @@ export class Game {
     try { s = JSON.parse(localStorage.getItem(SAVE_KEY)); } catch { s = null; }
     const fresh = !s || s.version !== 1;
     this.state = fresh ? this.newState() : s;
+    this.state.xp ??= 0;
+    this.state.counters.cured ??= 0;
 
     // Ön camdaki yosun
     if (this.state.algae) {
@@ -237,7 +237,8 @@ export class Game {
   }
 
   addCreature(data) {
-    const c = data.species === 'shrimp' ? new Shrimp(data) : new Fish(data);
+    const C = { shrimp: Shrimp, snail: Snail }[data.species] ?? Fish;
+    const c = new C(data);
     this.creatures.push(c);
     this.state.creatures.push(data);
     this.scene.add(c.group);
@@ -253,6 +254,91 @@ export class Game {
   }
 
   count(species) { return this.creatures.filter((c) => c.species === species).length; }
+  counts() { return Object.fromEntries(Object.keys(SPECIES).map((k) => [k, this.count(k)])); }
+
+  // ------------------------------------------------------- Doğa seviyesi
+  get level() { return levelFromXp(this.state.xp); }
+  levelProgress() {
+    const l = this.level, a = xpForLevel(l), b = xpForLevel(l + 1);
+    return (this.state.xp - a) / (b - a);
+  }
+  isUnlocked(key) {
+    const sp = SPECIES[key];
+    return !!this.state.unlocked[key] || this.level >= (sp.level ?? 1);
+  }
+  addXp(n) {
+    const before = this.level;
+    this.state.xp += n;
+    const after = this.level;
+    if (after > before) {
+      const opened = Object.entries(SPECIES).filter(([, sp]) => sp.level > before && sp.level <= after).map(([, sp]) => sp.name);
+      this.toast(`Doğa Seviyesi ${after}!${opened.length ? ' Yeni türler: ' + opened.join(', ') : ''}`, 'good');
+      this.emit('levelup', after);
+    }
+  }
+
+  // Salyangozların camdaki yosunu kazıması
+  cleanGlass(x, y, amount) {
+    const u = (x + HALF_W + TANK.glass) / (TANK.w + 2 * TANK.glass);
+    const v = (y + TANK.glass) / (TANK.h + TANK.glass);
+    const cx = u * ALGAE_GRID.w, cy = v * ALGAE_GRID.h;
+    let removed = 0;
+    for (let yy = Math.floor(cy - 1.5); yy <= Math.ceil(cy + 1.5); yy++) for (let xx = Math.floor(cx - 1.5); xx <= Math.ceil(cx + 1.5); xx++) {
+      if (xx < 0 || yy < 0 || xx >= ALGAE_GRID.w || yy >= ALGAE_GRID.h) continue;
+      const d = Math.hypot(xx - cx, yy - cy) / 1.6;
+      if (d > 1) continue;
+      const i = yy * ALGAE_GRID.w + xx;
+      const b = this.algaeGrid[i];
+      this.algaeGrid[i] = Math.max(0, b - amount * (1 - d));
+      removed += b - this.algaeGrid[i];
+    }
+    if (removed > 0) this.algaeDirty = true;
+    return removed;
+  }
+
+  // ------------------------------------------------------------ Hastalık
+  treat(c) {
+    if (!c?.data.ich || c.data.treating) return false;
+    if (this.state.coins < 12) { this.toast('Tedavi için 12 bakım parası gerekiyor.', 'warn'); return false; }
+    this.state.coins -= 12;
+    c.data.treating = true;
+    this.toast(`${c.data.name} için ilaç suya eklendi. Birkaç saat içinde benekler kaybolacak.`, 'good');
+    return true;
+  }
+
+  updateDisease(dtMin) {
+    const h = dtMin / 60;
+    const q = quality(this.state.water);
+    const sick = this.creatures.filter((c) => (c.data.ich ?? 0) > 0.3).length;
+    for (const c of this.creatures) {
+      if (c.sp.kind !== 'fish') continue;
+      const d = c.data;
+      if (!d.ich) {
+        // stres + kötü su (veya hasta komşu) beyaz beneği tetikler
+        let risk = 0;
+        if (d.stress > 55 && q < 65) risk += 0.06;
+        if (sick && d.stress > 40) risk += 0.04 * sick;
+        if (Math.random() < risk * h) {
+          d.ich = 0.05;
+          this.toast(`${d.name} üzerinde beyaz benekler belirdi. Hasta balığa dokunup tedavi edebilirsin.`, 'warn');
+        }
+        continue;
+      }
+      if (d.treating) {
+        d.ich = Math.max(0, d.ich - 0.25 * h);
+        if (d.ich === 0) {
+          d.treating = false;
+          this.state.counters.cured++;
+          this.toast(`${d.name} tamamen iyileşti!`, 'good');
+          this.discover('cured', 'Beyaz benek (Ich) parazitinin sık su değişimi ve tedaviyle yenilebildiğini öğrendin.');
+        }
+      } else {
+        d.ich = Math.min(1, d.ich + (q > 80 && d.stress < 30 ? -0.03 : 0.08) * h);
+      }
+      d.health = Math.max(0, d.health - d.ich * 3 * h);
+      d.stress = Math.min(100, d.stress + d.ich * 4 * h);
+    }
+  }
 
   // ------------------------------------------------------------------- Yem
   dropFood(x, z) {
@@ -416,6 +502,8 @@ export class Game {
     // Sağlıklı seri
     const healthy = quality(s.water) > 70 && this.creatures.length > 0 && this.creatures.every((c) => c.data.health > 70);
     s.counters.healthyMin = healthy ? s.counters.healthyMin + dtMin : 0;
+    if (healthy) { this.xpAcc = (this.xpAcc ?? 0) + dtMin; if (this.xpAcc >= 30) { this.xpAcc -= 30; this.addXp(1); } }
+    this.updateDisease(dtMin);
 
     if (!offline && this.ticks++ % 10 === 0) for (const p of this.plants.plants) this.plants.layout(p);
     this.checkQuests();
@@ -427,6 +515,7 @@ export class Game {
     if (q.check(this)) {
       this.state.coins += q.reward;
       this.state.questIndex++;
+      this.addXp(q.reward);
       if (q.unlock) {
         this.state.unlocked[q.unlock] = true;
         this.toast(`Yeni tür açıldı: ${SPECIES[q.unlock].name}`, 'good');
@@ -439,6 +528,7 @@ export class Game {
     if (this.state.discoveries.includes(id)) return;
     this.state.discoveries.push(id);
     this.toast('Gözlem: ' + text, 'discover');
+    this.addXp(20);
   }
 
   // ----------------------------------------------------------------- Eylemler
@@ -455,7 +545,7 @@ export class Game {
     const item = kind === 'plant' ? PLANT_TYPES[key] : SPECIES[key];
     if (this.state.coins < item.price) { this.toast('Yeterli bakım paran yok.', 'warn'); return false; }
     if (kind === 'creature') {
-      if (!this.state.unlocked[key]) return false;
+      if (!this.isUnlocked(key)) return false;
       if (this.creatures.length >= 30) { this.toast('Bu tank için canlı sayısı sınırına ulaştın.', 'warn'); return false; }
       this.state.coins -= item.price;
       const c = this.spawn(key);
@@ -702,14 +792,29 @@ export class Game {
       o2: w.o2,
       plants: this.plants.plants,
       events: this.events,
-      counts: Object.fromEntries(Object.keys(SPECIES).map((k) => [k, this.count(k)])),
+      counts: this.counts(),
       school: this.school,
+      algae: w.algae / 100,
+      cleanGlass: (x, y, a) => this.cleanGlass(x, y, a),
     };
     for (const c of this.creatures) c.update(bdt, world);
     this.updateFood(bdt, dtMin);
 
     for (const ev of this.events) {
       if (ev.type === 'eat') this.sfx('eat');
+      if (ev.type === 'snailGlass') this.discover('snailGlass', 'Nerit salyangoz camdaki yosunu radula denen törpü dilleriyle kazıyor.');
+      if (ev.type === 'flare') this.discover('bettaFlare', 'Erkek betalar rakibe solungaç kapaklarını ve yüzgeçlerini açarak gözdağı verir.');
+      if (ev.type === 'nip' && this.time - (this.lastNip ?? -99) > 30) {
+        this.lastNip = this.time;
+        this.toast(`${ev.fish.data.name} (${ev.fish.sp.name}), ${ev.target.data.name} adlı balığın yüzgecini ısırdı. Bu türler birlikte stres yaşıyor.`, 'warn');
+      }
+      if (ev.type === 'predation' && this.creatures.includes(ev.target)) {
+        const t = ev.target;
+        this.removeCreature(t);
+        this.state.care.push({ data: { ...t.data, health: 40, stress: 60 }, until: this.state.minutes + 12 * 60 });
+        this.toast(`${ev.fish.data.name} (${ev.fish.sp.name}) ${t.data.name} adlı ${t.sp.name.toLowerCase()} türünü avlamaya çalıştı! Rahat modda ${t.data.name} bakım merkezine kaçırıldı. Bu türleri ayrı tutmayı düşün.`, 'warn');
+        this.discover('angelHunt', 'Melek balıkları, ağızlarına sığan küçük balıkları doğada da avlar.');
+      }
       if (ev.type === 'coryAir') this.discover('coryAir', 'Corydoras bağırsağıyla da nefes alabilir; yüzeye fırlayıp hava yuttu!');
     }
     this.events.length = 0;

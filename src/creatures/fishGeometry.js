@@ -17,6 +17,11 @@ export function buildFish(b) {
   const nL = 36, nR = 22;
   const pos = [], seg = [], uv = [], idx = [];
   const prof = (u) => {
+    if (b.shape === 'disc') {
+      // melek balığı: yuvarlak, yanlardan basık disk + kısa kuyruk sapı
+      const k = Math.pow(Math.sin(Math.PI * Math.min(1, u * 1.08 + 0.04)), 0.6);
+      return Math.max(k * (u < 0.12 ? 0.75 + u * 2 : 1), u > 0.85 ? 0.14 : 0.04);
+    }
     // u: 0 burun .. 1 kuyruk sapı
     const front = Math.sqrt(Math.sin(Math.min(u / 0.38, 1) * Math.PI / 2));
     const back = 1 - (1 - 0.28) * Math.pow(Math.max(0, (u - 0.38) / 0.62), 1.15);
@@ -76,14 +81,15 @@ export function buildFish(b) {
   addGrid(14, 12, (u, v) => {
     const vv = v * 2 - 1;
     let len, spread;
-    if (b.tail === 'fan') {
+    if (b.tail === 'fan' || b.tail === 'veil') {
       spread = pedH + (b.tailSpread - pedH) * Math.pow(u, 0.7);
       len = b.tailLen * (1 - 0.12 * vv * vv);
     } else {
       spread = pedH + (b.tailSpread - pedH) * u;
       len = b.tailLen * (0.6 + 0.4 * Math.pow(Math.abs(vv), 0.8));
     }
-    return { x: 0, y: vv * spread * (b.tail === 'fan' ? 1 : 0.95) + (b.tailLift ?? 0) * u, z: zTail + 0.05 - u * len, v: vv, w: u };
+    const droop = b.tail === 'veil' ? -Math.pow(u, 1.6) * b.tailLen * 0.35 : 0;
+    return { x: 0, y: vv * spread * (b.tail === 'fan' ? 1 : b.tail === 'veil' ? 1.05 : 0.95) + (b.tailLift ?? 0) * u + droop, z: zTail + 0.05 - u * len, v: vv, w: u };
   });
 
   // Sırt yüzgeci: [başlangıç u, bitiş u, yükseklik oranı]
@@ -92,7 +98,7 @@ export function buildFish(b) {
     const uu = d0 + (d1 - d0) * u;
     const z = zNose - uu * L;
     const top = halfH(uu) + (0.04 * b.height);
-    const hgt = b.height * dh * Math.sin(Math.min(1, u * 1.15) * Math.PI * 0.62 + 0.25) * (b.tail === 'fan' ? 1.0 + u * 0.6 : 1);
+    const hgt = b.height * dh * Math.sin(Math.min(1, u * 1.15) * Math.PI * 0.62 + 0.25) * (b.tail === 'fan' || b.tail === 'veil' ? 1.0 + u * 0.6 : 1);
     return { x: 0, y: top + v * hgt * 0.98, z: z - v * hgt * 0.5, v: 1, w: v };
   });
 
@@ -126,7 +132,7 @@ export function buildFish(b) {
   for (const side of [-1, 1]) {
     const u0 = 0.48;
     const z0 = zNose - u0 * L;
-    const fl = b.height * 0.32;
+    const fl = b.height * 0.32 * (b.ventral ?? 1);
     addGrid(4, 3, (u, v) => ({
       x: side * (b.width * 0.12 + u * fl * 0.25),
       y: -halfH(u0) * 0.9 - u * fl * 0.6,

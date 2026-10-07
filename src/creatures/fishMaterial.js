@@ -44,6 +44,7 @@ const PATTERN_DECL = /* glsl */ `
   uniform float uBodyFrac;
   uniform float uPale;
   uniform float uHighlight;
+  uniform float uIch;
   uniform vec3 uColA;
   uniform vec3 uColB;
   uniform float uNight;
@@ -102,7 +103,7 @@ const BODY_COLOR = /* glsl */ `
       // pullarda yanardöner mavi-yeşil
       c += vec3(0.05, 0.25, 0.3) * pow(1.0 - facing, 2.0) * region;
       gGlow = blob * region * 0.25; gGlowCol = uColA;
-    } else {
+    } else if (uPattern < 2.5) {
       // CORYDORAS AENEUS (bronz)
       vec3 base = vec3(0.62, 0.46, 0.36);
       c = base;
@@ -114,7 +115,30 @@ const BODY_COLOR = /* glsl */ `
       c *= 1.0 - 0.15 * band(fract(u * 14.0), 0.5, 0.06, 0.04) * flank;
       c = mix(c, vec3(0.78, 0.62, 0.5), smoothstep(-0.55, -0.85, v));
       c += vec3(0.2, 0.15, 0.05) * band(u, 0.15, 0.06, 0.03);
+    } else if (uPattern < 3.5) {
+      // ZEBRA DANIO: altın zemin üzerinde boylu boyunca lacivert şeritler
+      c = mix(vec3(0.78, 0.7, 0.48), vec3(0.42, 0.4, 0.3), smoothstep(0.4, 0.9, v));
+      c = mix(c, vec3(0.88, 0.86, 0.8), smoothstep(-0.5, -0.85, v));
+      float st = smoothstep(0.25, 0.55, sin((v + 0.08) * 3.14159 * 4.6)) * smoothstep(-0.75, -0.45, v) * smoothstep(0.6, 0.35, v) * smoothstep(0.12, 0.25, u);
+      vec3 blue = mix(vec3(0.05, 0.1, 0.42), vec3(0.15, 0.3, 0.7), pow(1.0 - facing, 1.5));
+      c = mix(c, blue, st);
+      gGlow = st * 0.25; gGlowCol = blue;
+    } else if (uPattern < 4.5) {
+      // BETA: koyu ve doygun gövde, pullarda yanardöner parıltı
+      c = uColA * (0.75 + 0.25 * fn(vec2(u * 30.0, v * 10.0)));
+      c = mix(c, uColA * 0.55, smoothstep(0.3, 0.9, v));
+      c += uColB * 0.25 * pow(1.0 - facing, 2.0) * smoothstep(0.1, 0.3, u);
+      gGlow = 0.15; gGlowCol = uColA;
+    } else {
+      // MELEK BALIĞI: gümüş zemin, siyah dikey bantlar
+      c = mix(vec3(0.84, 0.84, 0.8), vec3(0.6, 0.55, 0.38), smoothstep(0.55, 0.95, v) * smoothstep(0.4, 0.1, u));
+      float bars = band(u, 0.13, 0.035, 0.02) + band(u, 0.42, 0.06, 0.03) + band(u, 0.74, 0.045, 0.025) * 0.8 + band(u, 0.97, 0.03, 0.02) * 0.6;
+      c = mix(c, vec3(0.06, 0.06, 0.07), clamp(bars, 0.0, 1.0) * 0.9);
+      c += vec3(0.1, 0.12, 0.14) * pow(1.0 - facing, 2.0);
     }
+    // beyaz benek hastalığı
+    float ich = smoothstep(0.8, 0.88, fn(vec2(u * 60.0, v * 18.0) + uSeed * 3.0)) * uIch;
+    c = mix(c, vec3(0.95, 0.95, 0.92), ich);
     // sağlık/stres: soluk ve gri
     float g = dot(c, vec3(0.3, 0.59, 0.11));
     c = mix(c, vec3(g) * 0.9, uPale * 0.75);
@@ -144,11 +168,28 @@ const FIN_COLOR = /* glsl */ `
       c = mix(c, uColB * 1.2, smoothstep(0.85, 1.0, w) * 0.6);
       a = 0.55 + 0.3 * w;
       if (vSeg.z > 1.5) { c = vec3(0.8); a = 0.15; }
-    } else {
+    } else if (uPattern < 2.5) {
       c = vec3(0.78, 0.72, 0.62);
       float pep = smoothstep(0.65, 0.75, fn(vUv * vec2(14.0, 10.0)));
       c = mix(c, vec3(0.15, 0.12, 0.1), pep * 0.8);
       a = 0.3 + pep * 0.3;
+    } else if (uPattern < 3.5) {
+      c = vec3(0.85, 0.82, 0.7);
+      float st = smoothstep(0.2, 0.6, sin(vUv.y * 22.0)) * (isTail > 0.5 || vSeg.y < -0.5 ? 1.0 : 0.0);
+      c = mix(c, vec3(0.1, 0.16, 0.45), st);
+      a = 0.22 + st * 0.4;
+    } else if (uPattern < 4.5) {
+      // peçe yüzgeçler: gövde rengi, uçlara doğru ikinci renk, yarı saydam kenar
+      c = mix(uColA * 0.9, uColB, smoothstep(0.55, 1.0, w) * 0.7);
+      rays = 0.9 + 0.1 * (rays - 0.82) / 0.18;
+      a = 0.9 - smoothstep(0.88, 1.0, w) * 0.3;
+      if (vSeg.z > 1.5) { c = uColA; a = 0.4; }
+    } else {
+      c = vec3(0.8, 0.8, 0.78);
+      float bar = band(vUv.x, 0.5, 0.12, 0.08) * (vSeg.y != 0.0 ? 1.0 : 0.0);
+      c = mix(c, vec3(0.08), bar * 0.8);
+      a = 0.25 + bar * 0.35;
+      if (vSeg.z > 1.5) { a = 0.35; c = vec3(0.85); }
     }
     c *= rays;
     float edge = 1.0 - smoothstep(0.85, 1.0, w) * 0.4;
@@ -219,6 +260,7 @@ export function makeFishUniforms(len, pattern, bodyFrac, colA, colB, seed) {
     uBodyFrac: { value: bodyFrac },
     uPale: { value: 0 },
     uHighlight: { value: 0 },
+    uIch: { value: 0 },
     uColA: { value: new THREE.Color(colA) },
     uColB: { value: new THREE.Color(colB) },
   };

@@ -43,6 +43,16 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 .bar i { display: block; height: 100%; width: 50%; background: currentColor; border-radius: 3px; transition: width 0.4s; }
 .temp, .coins { display: flex; align-items: center; gap: 5px; font-variant-numeric: tabular-nums; }
 .coins { color: #f3d98b; font-weight: 600; }
+.lvl { display: flex; align-items: center; gap: 6px; color: #b9e6a0; font-weight: 600; }
+.lvl .bar { width: 40px; }
+.iwarn { margin-top: 5px; font-size: 11.5px; line-height: 1.35; color: var(--warn); }
+.buy.confirm { background: rgba(242, 198, 109, 0.25); color: var(--warn); font-size: 12px; }
+.cdisease { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: -4px 0 10px; font-size: 12px; color: var(--bad); }
+.treat { display: flex; align-items: center; gap: 5px; padding: 6px 9px; border-radius: 9px; background: rgba(255, 138, 122, 0.15); color: var(--bad); font-size: 12px; white-space: nowrap; }
+.sw-danio { background: repeating-linear-gradient(180deg, #c9b57a 0 5px, #1a2a70 5px 9px); }
+.sw-betta { background: radial-gradient(circle at 30% 50%, #8a0410, #2050ff); }
+.sw-angel { background: linear-gradient(90deg, #d8d8d0 0 25%, #111 25% 33%, #d8d8d0 33% 60%, #111 60% 70%, #d8d8d0 70%); }
+.sw-snail { background: repeating-conic-gradient(from 0deg at 50% 60%, #c8a030 0 12deg, #1a1208 12deg 24deg); border-radius: 50%; }
 @keyframes blink { 50% { opacity: 0.55; } }
 
 /* Görev */
@@ -153,7 +163,7 @@ button { font: inherit; color: inherit; background: none; border: 0; cursor: poi
 
 @media (max-width: 760px) {
   .topbar { left: 8px; right: 8px; top: 8px; transform: none; justify-content: space-between; gap: 6px; padding: 7px 10px; font-size: 11px; border-radius: 12px; }
-  .topbar .sep, .clock .day, .temp { display: none; }
+  .topbar .sep, .clock .day, .temp, .lvl .bar { display: none; }
   .bar { width: 34px; }
   .ic { width: 18px; height: 18px; }
   .quest { left: 8px; right: 8px; width: auto; top: 54px; padding: 9px 12px; }

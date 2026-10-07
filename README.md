@@ -26,6 +26,10 @@ Ardından terminalde yazan adresi (varsayılan `http://localhost:5173`) aç.
 İlerleme tarayıcıda otomatik kaydedilir; geri döndüğünde geçen süre (en fazla 12 oyun saati) simüle edilir.
 Kaydı sıfırlamak için tarayıcı konsolunda `vivarium.reset()`. Su yüzeyi yansıması zayıf makinelerde adrese `?norefl` eklenerek kapatılabilir.
 
+## Türler ve ilerleme
+
+8 tür var: lepistes, neon tetra, corydoras, red cherry karides, nerit salyangoz, zebra danio, beta ve melek balığı. Yeni türler **Doğa Seviyesi** ile açılır (görev, gözlem ve sağlıklı tank deneyim kazandırır). Dükkân uyumsuz türler için uyarır: beta lepisteslere ve başka betalara saldırır, melek balığı neon ve karides avlar. Stresli balıklarda beyaz benek hastalığı çıkabilir; bilgi kartından tedavi edilir.
+
 ## Dokular
 
 `public/textures/` içindeki kum, taş, kök, zemin, dolap ve duvar dokuları ile `hotel_room_1k.hdr` ortam ışığı [Poly Haven](https://polyhaven.com)'dan alınmıştır (CC0, kamu malı). Anubias modeli Poly Haven'ın `anthurium_botany_01` modelinden, vallisneria yaprak dokusu `grass_bermuda_01`'den gelir (`public/models/plants/`, CC0). UV'si olmayan taş ve çakıllarda üç eksenli (triplanar) yansıtma kullanılır.

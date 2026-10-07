@@ -46,6 +46,21 @@ export const QUESTS = [
     reward: 20, check: (g) => g.state.counters.photos >= 1,
   },
   {
+    id: 'level3', title: 'Doğa gözlemcisi',
+    desc: 'Görevleri tamamlayarak, yeni davranışlar gözlemleyerek ve tankı sağlıklı tutarak Doğa Seviyesi 3\'e ulaş.',
+    reward: 30, check: (g) => g.level >= 3, progress: (g) => g.levelProgress(),
+  },
+  {
+    id: 'snail', title: 'Sessiz temizlikçi',
+    desc: 'Bir nerit salyangoz al ve ön camdaki yosunu kazımasını izle.',
+    reward: 25, check: (g) => g.state.discoveries.includes('snailGlass'),
+  },
+  {
+    id: 'community', title: 'Uyumlu topluluk',
+    desc: 'En az 4 farklı türü aynı tankta, hepsi sağlıklı (sağlık 70 üstü) olacak şekilde bir arada tut. Dükkândaki uyumluluk uyarılarına dikkat et.',
+    reward: 50, check: (g) => Object.values(g.counts()).filter((n) => n > 0).length >= 4 && g.creatures.every((c) => c.data.health > 70),
+  },
+  {
     id: 'healthy', title: 'Dengeli ekosistem',
     desc: 'Su kalitesini 70 üstünde ve tüm canlıları sağlıklı tutarak 3 gün geçir.',
     reward: 100, check: (g) => g.state.counters.healthyMin >= 3 * 1440, progress: (g) => g.state.counters.healthyMin / (3 * 1440),
