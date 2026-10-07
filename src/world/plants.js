@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { patchUnderwater } from '../render/water.js';
 import { mulberry } from '../render/textures.js';
 import { sandHeight } from './substrate.js';
@@ -85,6 +86,7 @@ function plantShader(kind) {
       .replace('#include <common>', `#include <common>
         varying vec2 vLeafUv;
         varying float vHealth;
+        ${kind === 'ribbon' ? 'uniform sampler2D tBlade;' : ''}
         float ph21(vec2 p) { return fract(sin(dot(p, vec2(41.3, 289.1))) * 17853.3); }
         float pnoise(vec2 p) { vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f);
           return mix(mix(ph21(i), ph21(i+vec2(1,0)), f.x), mix(ph21(i+vec2(0,1)), ph21(i+vec2(1,1)), f.x), f.y); }`)
@@ -93,7 +95,7 @@ function plantShader(kind) {
           vec2 lu = vLeafUv;
           float mid = abs(lu.x - 0.5) * 2.0;
           ${kind === 'ribbon'
-            ? 'float vein = 0.92 + 0.08 * sin(lu.x * 40.0); float tipBrown = smoothstep(0.85, 1.0, lu.y) * 0.25;'
+            ? 'vec3 bt = texture2D(tBlade, vec2(mix(0.9262, 0.9330, lu.x), mix(0.02, 0.77, lu.y))).rgb; float vein = 0.45 + dot(bt, vec3(0.333)) * 2.2; float tipBrown = smoothstep(0.88, 1.0, lu.y) * 0.25;'
             : 'float vein = 1.0 - (1.0 - smoothstep(0.0, 0.08, mid)) * 0.35 + 0.08 * smoothstep(0.85, 1.0, sin((lu.y * 22.0 - mid * 6.0)) ); float tipBrown = 0.0;'}
           diffuseColor.rgb *= vein;
           // kenara ve uca doğru açık ton
@@ -114,10 +116,65 @@ function plantShader(kind) {
   };
 }
 
-function makeMaterial(kind, opts) {
+function makeMaterial(kind, opts, uniforms = {}) {
   const m = new THREE.MeshStandardMaterial({ side: THREE.DoubleSide, ...opts });
-  return patchUnderwater(m, { key: 'plant-' + kind, extra: plantShader(kind) });
+  return patchUnderwater(m, { key: 'plant-' + kind, extra: plantShader(kind), uniforms });
 }
+
+// --- Gerçek bitki modelleri (Poly Haven, CC0) ---
+const MODEL_BASE = `${import.meta.env.BASE_URL}models/plants/`;
+
+function bladeTexture() {
+  const t = new THREE.TextureLoader().load(`${MODEL_BASE}grass_bermuda_01/textures/grass_bermuda_01_diff_1k.jpg`);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 8;
+  return t;
+}
+
+// glTF bitkiler için salınım + sağlık/yosun rengi (yerel birim: metre, taban y=0)
+function gltfPlantShader(shader) {
+  shader.vertexShader = shader.vertexShader
+    .replace('#include <common>', '#include <common>\nuniform float uTime;\nuniform float uPhase;')
+    .replace('#include <begin_vertex>', `#include <begin_vertex>
+      {
+        float h = clamp(position.y / 0.45, 0.0, 1.2);
+        float b = h * h;
+        transformed.x += sin(uTime * 0.8 + uPhase + position.z * 6.0) * b * 0.014;
+        transformed.z += cos(uTime * 0.6 + uPhase * 1.3 + position.x * 5.0) * b * 0.01;
+      }`);
+  shader.fragmentShader = shader.fragmentShader
+    .replace('#include <common>', `#include <common>
+      uniform float uHealth;
+      float gh21(vec2 p) { return fract(sin(dot(p, vec2(41.3, 289.1))) * 17853.3); }
+      float gnoise(vec2 p) { vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f);
+        return mix(mix(gh21(i), gh21(i+vec2(1,0)), f.x), mix(gh21(i+vec2(0,1)), gh21(i+vec2(1,1)), f.x), f.y); }`)
+    .replace('#include <color_fragment>', `#include <color_fragment>
+      {
+        float sick = clamp(1.0 - uHealth, 0.0, 1.0);
+        float spots = smoothstep(0.55, 0.75, gnoise(vWPos.xz * 2.5 + vWPos.y));
+        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.55, 0.48, 0.16), sick * (0.6 + spots * 0.4));
+        float alg = smoothstep(0.35, 0.8, gnoise(vWPos.xz * 1.7 + vWPos.y) * 0.6 + gnoise(vWPos.xy * 9.0) * 0.5) * uAlgae;
+        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.2, 0.24, 0.08), alg * 0.75);
+      }`);
+}
+
+const anubiasModel = { proto: null, pending: [] };
+new GLTFLoader().load(`${MODEL_BASE}anthurium_botany_01/anthurium_botany_01_1k.gltf`, (gltf) => {
+  const geos = [];
+  let material = null;
+  gltf.scene.traverse((o) => {
+    if (!o.isMesh) return;
+    const g = o.geometry.clone();
+    g.computeBoundingBox();
+    const c = g.boundingBox.getCenter(new THREE.Vector3());
+    g.translate(-c.x, -g.boundingBox.min.y, -c.z);
+    geos.push(g);
+    material = o.material;
+  });
+  anubiasModel.proto = { geos, material };
+  for (const fn of anubiasModel.pending) fn();
+  anubiasModel.pending.length = 0;
+});
 
 class LeafPool {
   constructor(geo, mat, cap) {
@@ -149,9 +206,8 @@ class LeafPool {
 export function createPlants(scene) {
   const group = new THREE.Group();
   const pools = {
-    vallisneria: new LeafPool(ribbonGeometry(), makeMaterial('ribbon', { color: 0x5f9a38, roughness: 0.55 }), 600),
+    vallisneria: new LeafPool(ribbonGeometry(), makeMaterial('ribbon', { color: 0x6aa83e, roughness: 0.55 }, { tBlade: { value: bladeTexture() } }), 600),
     javafern: new LeafPool(lanceGeometry({ width: 0.15, petiole: 0.12, fold: 0.35 }), makeMaterial('fern', { color: 0x2f5a22, roughness: 0.5 }), 400),
-    anubias: new LeafPool(lanceGeometry({ width: 0.3, petiole: 0.35, fold: 0.12, oval: true }), makeMaterial('anubias', { color: 0x1f4219, roughness: 0.28, metalness: 0.0 }), 300),
   };
   for (const p of Object.values(pools)) group.add(p.mesh);
 
@@ -164,7 +220,34 @@ export function createPlants(scene) {
   const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), pos = new THREE.Vector3(), scl = new THREE.Vector3();
   const col = new THREE.Color();
 
+  function buildAnubias(plant) {
+    const { geos, material } = anubiasModel.proto;
+    const r = mulberry(plant.seed + 7);
+    const m = material.clone();
+    m.side = THREE.DoubleSide;
+    m.alphaTest = 0.5;
+    m.transparent = false;
+    m.color = new THREE.Color(0.62, 0.78, 0.6); // Anubias: daha koyu, mavimsi yeşil
+    patchUnderwater(m, { key: 'gltf-plant', extra: gltfPlantShader, uniforms: { uHealth: plant.uHealth, uPhase: { value: r() * 6.28 } } });
+    const mesh = new THREE.Mesh(geos[Math.floor(r() * geos.length)], m);
+    mesh.rotation.y = r() * Math.PI * 2;
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    group.add(mesh);
+    plant.model = mesh;
+    plant.extra.push(mesh);
+    layout(plant);
+  }
+
   function layout(plant) {
+    if (plant.type === 'anubias') {
+      plant.uHealth.value = plant.health;
+      if (plant.model) {
+        plant.model.scale.setScalar(26 * (0.55 + 0.45 * plant.growth));
+        plant.model.position.set(plant.x, plant.y, plant.z);
+      }
+      return;
+    }
     const pool = pools[plant.type];
     const g = plant.growth;
     for (const leaf of plant.leaves) {
@@ -189,6 +272,12 @@ export function createPlants(scene) {
     const pool = pools[type];
     const base = y ?? sandHeight(x, z) - 0.3;
     const plant = { id: seed, type, x, z, y: base, growth, health, seed, leaves: [], extra: [] };
+    if (type === 'anubias') {
+      plant.uHealth = { value: health };
+      if (anubiasModel.proto) buildAnubias(plant); else anubiasModel.pending.push(() => buildAnubias(plant));
+      plants.push(plant);
+      return plant;
+    }
     let n;
     if (type === 'vallisneria') {
       n = 9 + Math.floor(r() * 6);
@@ -200,7 +289,7 @@ export function createPlants(scene) {
           len: 16 + r() * 16, wid: 0.9 + r() * 0.5, flex: 2.5 + r() * 2.5, phase: r() * 6.28,
         });
       }
-    } else if (type === 'javafern') {
+    } else {
       n = 9 + Math.floor(r() * 5);
       for (let k = 0; k < n; k++) {
         const a = (k / n) * Math.PI * 2 + r() * 0.5;
@@ -208,16 +297,6 @@ export function createPlants(scene) {
           ox: (r() - 0.5) * 2, oy: r() * 0.3, oz: (r() - 0.5) * 0.8,
           yaw: a, tilt: 0.35 + r() * 0.55, roll: (r() - 0.5) * 0.4,
           len: 7 + r() * 6, wid: 1, flex: 0.6 + r() * 0.5, phase: r() * 6.28,
-        });
-      }
-    } else {
-      n = 6 + Math.floor(r() * 4);
-      for (let k = 0; k < n; k++) {
-        const a = (k / n) * Math.PI * 2 + r() * 0.6;
-        plant.leaves.push({
-          ox: (r() - 0.5) * 2.2, oy: r() * 0.2, oz: (r() - 0.5) * 0.8,
-          yaw: a, tilt: 0.55 + r() * 0.5, roll: (r() - 0.5) * 0.3,
-          len: 6 + r() * 3.5, wid: 1, flex: 0.25 + r() * 0.2, phase: r() * 6.28,
         });
       }
     }
@@ -229,7 +308,7 @@ export function createPlants(scene) {
     plant.leaves = plant.leaves.filter((l) => l.i >= 0);
     if (pool.mesh.instanceColor) pool.mesh.instanceColor.needsUpdate = true;
 
-    if (type !== 'vallisneria') {
+    if (type === 'javafern') {
       const rh = new THREE.Mesh(rhizomeGeo, rhizomeMat);
       rh.position.set(x, base + 0.25, z);
       rh.rotation.y = r() * Math.PI;
@@ -244,7 +323,7 @@ export function createPlants(scene) {
 
   function remove(plant) {
     const pool = pools[plant.type];
-    for (const leaf of plant.leaves) pool.release(leaf.i);
+    if (pool) for (const leaf of plant.leaves) pool.release(leaf.i);
     for (const o of plant.extra) group.remove(o);
     plants.splice(plants.indexOf(plant), 1);
   }

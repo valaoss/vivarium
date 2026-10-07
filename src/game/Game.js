@@ -149,7 +149,7 @@ export class Game {
       this.addPlant('vallisneria', -14, -12, { growth: 0.75 });
       this.addPlant('vallisneria', 24, -11, { growth: 0.8 });
       this.addPlant('javafern', -10, -8.6, { growth: 0.8, y: 11.8 });
-      this.addPlant('anubias', 6.5, 1.5, { growth: 0.8 });
+      this.addPlant('anubias', 2, 6, { growth: 0.8 });
       this.spawn('guppy', { palette: 0, pos: [-5, 24, 0] });
       this.spawn('guppy', { palette: 1, pos: [6, 22, 3] });
       this.state.counters.planted = 0;
