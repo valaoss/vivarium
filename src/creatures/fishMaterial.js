@@ -128,17 +128,22 @@ const BODY_COLOR = /* glsl */ `
       c += vec3(0.05, 0.25, 0.3) * pow(1.0 - facing, 2.0) * region;
       gGlow = blob * region * 0.25; gGlowCol = uColA;
     } else if (uPattern < 2.5) {
-      // CORYDORAS AENEUS (bronz)
-      vec3 base = vec3(0.62, 0.46, 0.36);
-      c = base;
-      c = mix(c, vec3(0.3, 0.22, 0.14), smoothstep(0.3, 0.85, v));
-      float flank = smoothstep(-0.55, -0.2, v) * smoothstep(0.75, 0.35, v) * smoothstep(0.15, 0.3, u);
-      vec3 metal = mix(vec3(0.1, 0.28, 0.2), vec3(0.4, 0.34, 0.12), pow(1.0 - facing, 1.2));
+      // CORYDORAS AENEUS (bronz): koyu zeytin-bronz gövde, zümrüt parıltılı yan plakalar (sRGB → lineer)
+      c = vec3(0.46, 0.37, 0.25);
+      c = mix(c, vec3(0.3, 0.25, 0.16), smoothstep(0.3, 0.85, v));
+      float flank = smoothstep(-0.6, -0.2, v) * smoothstep(0.8, 0.35, v) * smoothstep(0.12, 0.26, u);
+      vec3 metal = mix(vec3(0.5, 0.46, 0.28), vec3(0.3, 0.46, 0.36), pow(1.0 - facing, 1.5));
       c = mix(c, metal, flank * 0.85);
-      // kemik plaka çizgileri
-      c *= 1.0 - 0.15 * band(fract(u * 14.0), 0.5, 0.06, 0.04) * flank;
-      c = mix(c, vec3(0.78, 0.62, 0.5), smoothstep(-0.55, -0.85, v));
-      c += vec3(0.2, 0.15, 0.05) * band(u, 0.15, 0.06, 0.03);
+      // iki sıra kemik plaka: dikey ek yerleri ve orta yatay dikiş
+      float plates = band(fract(u * 16.0), 0.5, 0.05, 0.035) * flank;
+      c *= 1.0 - 0.25 * plates;
+      c *= 1.0 - 0.2 * band(v, 0.05, 0.025, 0.02) * smoothstep(0.2, 0.3, u);
+      c *= 0.9 + 0.2 * fn(vec2(u * 34.0, v * 10.0));
+      // turuncu-altın kafa lekesi ve pembe-krem karın
+      c = mix(c, vec3(0.7, 0.52, 0.28), smoothstep(0.2, 0.05, u) * smoothstep(-0.3, 0.3, v) * 0.6);
+      c = mix(c, vec3(0.84, 0.72, 0.64), smoothstep(-0.55, -0.85, v));
+      c = pow(c, vec3(2.2));
+      gGlow = flank * 0.05; gGlowCol = vec3(0.05, 0.3, 0.2);
     } else if (uPattern < 3.5) {
       // ZEBRA DANIO: altın zemin üzerinde boylu boyunca lacivert şeritler
       c = mix(vec3(0.78, 0.7, 0.48), vec3(0.42, 0.4, 0.3), smoothstep(0.4, 0.9, v));
