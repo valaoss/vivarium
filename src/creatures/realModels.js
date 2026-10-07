@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { patchUnderwater } from '../render/water.js';
-import { SWIM_VERT_DECL, SWIM_VERT, PATTERN_DECL, FISH_SHARED } from './fishMaterial.js';
+import { SWIM_VERT_DECL, SWIM_VERT, PATTERN_DECL, FISH_SHARED, MOUTH_FRAG } from './fishMaterial.js';
 import { SPECIES } from './species.js';
 
 /*
@@ -21,17 +21,17 @@ const SOURCES = {
     credit: '“Paracheirodon Innesi _ Tetra Neon” — BlueMesh (CC-BY 4.0)',
   },
   guppy: {
-    species: 'guppy', axis: 'z', flip: true,
+    species: 'guppy', axis: 'z', flip: true, exclude: ['Circle002_0', 'Circle003_0'],
     url: 'models/creatures/guppy.glb',
     credit: '“Guppy Fish” — BlueMesh (CC-BY 4.0)',
   },
   guppy_f: {
-    species: 'guppy', axis: 'z',
+    species: 'guppy', axis: 'z', exclude: ['Object_11'],
     url: 'models/creatures/guppy_female.glb',
     credit: '“Guppy ♀” — Nestaeric (CC-BY 4.0)',
   },
   betta: {
-    species: 'betta', axis: 'z',
+    species: 'betta', axis: 'z', exclude: ['Cube_0'],
     url: 'models/creatures/betta.glb',
     credit: '“Betta Splendens” — BlueMesh (CC-BY 4.0)',
   },
@@ -64,7 +64,7 @@ function prepare(gltf, key, src) {
   const parts = [];
   gltf.scene.traverse((o) => {
     if (!o.isMesh) return;
-    if (src.exclude?.includes(o.material?.name)) return;
+    if (src.exclude?.includes(o.material?.name) || src.exclude?.includes(o.name)) return;
     const g = new THREE.BufferGeometry();
     for (const name of ['position', 'normal', 'uv']) if (o.geometry.attributes[name]) g.setAttribute(name, o.geometry.attributes[name].clone());
     if (o.geometry.index) g.setIndex(o.geometry.index.clone());
@@ -100,7 +100,17 @@ function prepare(gltf, key, src) {
     p.geo.setAttribute('aSeg', new THREE.BufferAttribute(seg, 4));
     if (!p.geo.attributes.normal) p.geo.computeVertexNormals();
   }
-  return { parts, total, credit: src.credit };
+  return { parts, total, credit: src.credit, mouth: findMouth(parts[0].geo, total) };
+}
+
+/** Ağız ucu: burnun en öndeki köşelerinin ortalaması (yerel koordinat) */
+export function findMouth(geo, total) {
+  const p = geo.attributes.position;
+  let maxZ = -Infinity;
+  for (let i = 0; i < p.count; i++) maxZ = Math.max(maxZ, p.getZ(i));
+  let y = 0, n = 0;
+  for (let i = 0; i < p.count; i++) if (p.getZ(i) > maxZ - total * 0.025) { y += p.getY(i); n++; }
+  return new THREE.Vector3(0, n ? y / n : 0, maxZ);
 }
 
 const REAL_FRAG = /* glsl */ `
@@ -138,7 +148,7 @@ export function makeRealFishMeshes(key, fishUniforms) {
           .replace('#include <begin_vertex>', '#include <begin_vertex>\n' + SWIM_VERT);
         sh.fragmentShader = sh.fragmentShader
           .replace('#include <common>', '#include <common>\n' + PATTERN_DECL)
-          .replace('#include <color_fragment>', '#include <color_fragment>\n' + REAL_FRAG)
+          .replace('#include <color_fragment>', '#include <color_fragment>\n' + REAL_FRAG + MOUTH_FRAG)
           .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
             totalEmissiveRadiance += vec3(0.25, 0.6, 1.0) * uHighlight * 0.12;`);
       },

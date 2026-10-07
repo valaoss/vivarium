@@ -212,7 +212,7 @@ export function createBubbles(source, max = MOBILE ? 360 : 640) {
 
 // Yem pulları: çizim için instanced küçük düzensiz pullar
 export function createFoodMesh(max = 240) {
-  const geo = new THREE.CircleGeometry(0.28, 5);
+  const geo = new THREE.CircleGeometry(0.2, 6);
   const p = geo.attributes.position;
   for (let i = 1; i < p.count; i++) {
     p.setX(i, p.getX(i) * (0.7 + Math.random() * 0.6));

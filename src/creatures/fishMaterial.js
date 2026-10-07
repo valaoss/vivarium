@@ -12,6 +12,9 @@ export const SWIM_VERT_DECL = /* glsl */ `
   uniform float uBend;
   uniform float uFlap;
   uniform float uLen;
+  uniform float uMouth;
+  uniform float uMouthY;
+  uniform float uGill;
   varying vec4 vSeg;
   varying vec3 vObjPos;
 `;
@@ -19,6 +22,20 @@ export const SWIM_VERT_DECL = /* glsl */ `
 export const SWIM_VERT = /* glsl */ `
   vSeg = aSeg;
   vObjPos = transformed;
+  {
+    // Ağız: ön uçtaki köşeler dudak hattından yukarı/aşağı açılır, dudaklar öne uzar
+    float km = smoothstep(0.075, 0.0, aSeg.x) * step(aSeg.z, 0.5);
+    if (km > 0.0) {
+      float dy = transformed.y - uMouthY;
+      float gape = uMouth * km * uLen;
+      transformed.y += dy > 0.0 ? gape * 0.034 : -gape * 0.055;
+      transformed.z += gape * 0.012;
+      transformed.x *= 1.0 + uMouth * km * 0.25;
+    }
+    // Solungaç kapakları: nefeste ve yutarken hafifçe açılır
+    float kg = smoothstep(0.1, 0.17, aSeg.x) * smoothstep(0.27, 0.19, aSeg.x) * step(aSeg.z, 0.5);
+    transformed.x *= 1.0 + uGill * kg * 0.09;
+  }
   {
     float s = aSeg.x;
     float env = 0.03 + s * s * 1.05;
@@ -36,6 +53,11 @@ export const SWIM_VERT = /* glsl */ `
     }
     transformed.x += lat;
   }
+`;
+
+// Açık ağızdan görünen iç yüzey: karanlık ağız boşluğu
+export const MOUTH_FRAG = /* glsl */ `
+  if (!gl_FrontFacing && vSeg.x < 0.1) diffuseColor.rgb *= 0.12;
 `;
 
 export const PATTERN_DECL = /* glsl */ `
@@ -295,7 +317,7 @@ export function makeFishMaterials(fishUniforms) {
         .replace('#include <begin_vertex>', '#include <begin_vertex>\n' + SWIM_VERT);
       sh.fragmentShader = sh.fragmentShader
         .replace('#include <common>', '#include <common>\n' + PATTERN_DECL)
-        .replace('#include <color_fragment>', '#include <color_fragment>\n' + BODY_COLOR)
+        .replace('#include <color_fragment>', '#include <color_fragment>\n' + BODY_COLOR + MOUTH_FRAG)
         .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
           totalEmissiveRadiance += gGlowCol * gGlow * 0.3 * (0.4 + uLamp);
           totalEmissiveRadiance += vec3(0.25, 0.6, 1.0) * uHighlight * 0.12;`);
@@ -330,6 +352,9 @@ export function makeFishUniforms(len, pattern, bodyFrac, colA, colB, seed) {
     uBend: { value: 0 },
     uFlap: { value: 0 },
     uLen: { value: len },
+    uMouth: { value: 0 },
+    uMouthY: { value: 0 },
+    uGill: { value: 0 },
     uPattern: { value: pattern },
     uSeed: { value: seed },
     uBodyFrac: { value: bodyFrac },

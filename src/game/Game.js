@@ -405,6 +405,7 @@ export class Game {
         rot: new THREE.Euler(Math.random() * 6, Math.random() * 6, 0),
         spin: (Math.random() - 0.5) * 3,
         eaten: false,
+        size: 0.5 + Math.random() ** 2 * 1.6,
       });
     }
     this.waterSim.drop(x, z, 1.4, 0.09);
@@ -427,6 +428,16 @@ export class Game {
     for (let i = this.food.length - 1; i >= 0; i--) {
       const f = this.food[i];
       if (f.eaten) { this.food.splice(i, 1); continue; }
+      if (f.held) {
+        if (!this.creatures.includes(f.held)) { f.held = null; f.state = 'sink'; }
+        continue;
+      }
+      if (f.kick) {
+        // tükürülen pul: kısa bir itki, sonra yine batar
+        f.pos.addScaledVector(f.kick, dt);
+        f.kick.multiplyScalar(Math.max(0, 1 - dt * 5));
+        if (f.kick.lengthSq() < 0.01) f.kick = null;
+      }
       if (f.state === 'float') {
         f.t -= dt;
         f.pos.x += Math.sin(this.time + i) * dt * 0.4;
@@ -446,7 +457,7 @@ export class Game {
       if (n >= 240) break;
       q.setFromEuler(f.rot);
       const fade = f.state === 'settled' ? Math.max(0.5, 1 - f.age / 300) : 1;
-      s.setScalar(fade);
+      s.setScalar(fade * (f.size ?? 1));
       m4.compose(f.pos, q, s);
       this.foodMesh.setMatrixAt(n++, m4);
     }

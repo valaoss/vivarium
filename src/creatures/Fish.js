@@ -3,7 +3,7 @@ import { TANK, HALF_W, HALF_D } from '../config.js';
 import { SPECIES } from './species.js';
 import { buildFish } from './fishGeometry.js';
 import { makeFishMaterials, makeFishUniforms } from './fishMaterial.js';
-import { makeRealFishMeshes, realModelKey } from './realModels.js';
+import { makeRealFishMeshes, realModelKey, REAL_FISH, findMouth } from './realModels.js';
 import { sandHeight } from '../world/substrate.js';
 
 const GEO_CACHE = {};
@@ -15,7 +15,7 @@ const GUPPY_PALETTES = [
 ];
 
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _m = new THREE.Matrix4(), _up = new THREE.Vector3(0, 1, 0);
-const _x = new THREE.Vector3(), _y = new THREE.Vector3(), _q = new THREE.Quaternion();
+const _x = new THREE.Vector3(), _y = new THREE.Vector3(), _q = new THREE.Quaternion(), _mw = new THREE.Vector3(), _fd = new THREE.Vector3();
 
 export const STATE_LABEL = {
   wander: 'Dolaşıyor', school: 'Sürüyle yüzüyor', seek: 'Yem arıyor', eat: 'Yiyor', flee: 'Kaçıyor',
@@ -78,6 +78,15 @@ export class Fish {
         this.group.add(e, ring);
       }
     }
+
+    // Ağız ucu (yerel): yem buraya çekilir
+    if (realKey) this.mouthLocal = REAL_FISH[realKey].mouth.clone();
+    else this.mouthLocal = (geo.mouth ??= findMouth(geo.body, geo.total)).clone();
+    this.u.uMouthY.value = this.mouthLocal.y;
+    this.mouthOpen = 0;
+    this.gill = 0;
+    this.breath = Math.random() * 6;
+    this.feed = null;
 
     const p = data.pos ?? [0, TANK.water * 0.6, 0];
     this.pos = new THREE.Vector3(...p);
@@ -146,9 +155,13 @@ export class Fish {
     let food = null;
     const hungry = d.hunger > (d.trait === 'Obur' ? 12 : 22);
 
-    if (this.flee > 0) {
+    const fe = this.feed;
+    if (fe && (fe.phase === 'hold' || fe.phase === 'spit')) {
+      state = 'eat';
+    } else if (this.flee > 0) {
       state = 'flee';
       this.flee -= dt;
+      if (fe) this.feed = null;
     } else if (hungry && night < 0.7) {
       food = this.findFood(world);
       if (food) state = 'seek';
@@ -201,18 +214,13 @@ export class Fish {
         maxTurn = 9;
         break;
       case 'seek': {
-        seekTo(food.pos, 2.2);
-        const dist = food.pos.distanceTo(pos);
-        speed = Math.min(sp.burst * 0.55, 3 + dist * 1.2);
-        maxTurn = 7;
-        // ağız (burun) yeme değdi mi
-        const mouth = _v2.copy(this.fwd).multiplyScalar(this.total * 0.45).add(pos);
-        if (mouth.distanceTo(food.pos) < 0.9 + this.total * 0.1 && !food.eaten) {
-          food.eaten = true;
-          d.hunger = Math.max(0, d.hunger - 10);
-          this.state = 'eat';
-          world.events.push({ type: 'eat', fish: this, food });
-        }
+        this.updateFeeding(dt, world, food, seekTo);
+        speed = this.feedSpeed; maxTurn = this.feedTurn;
+        break;
+      }
+      case 'eat': {
+        this.updateFeeding(dt, world, null, seekTo);
+        speed = this.feedSpeed; maxTurn = this.feedTurn;
         break;
       }
       case 'air': {
@@ -330,10 +338,12 @@ export class Fish {
     pos.y = THREE.MathUtils.clamp(pos.y, lo - 0.3, TANK.water - 0.4);
 
     const spd = this.vel.length();
-    if (spd > 0.4) {
-      const dir = _x.copy(this.vel).divideScalar(spd);
+    const face = (state === 'seek' || state === 'eat') && this.faceDir;
+    if (spd > 0.4 || face) {
+      // nişan alırken burun hıza değil yeme döner
+      const dir = face ? _x.copy(this.faceDir) : _x.copy(this.vel).divideScalar(spd);
       // eğim sınırla
-      const maxPitch = sp.bottom && state !== 'air' ? 0.25 : 0.6;
+      const maxPitch = face ? 1.1 : sp.bottom && state !== 'air' ? 0.25 : 0.6;
       dir.y = THREE.MathUtils.clamp(dir.y, -maxPitch, maxPitch);
       dir.normalize();
       const prevYaw = Math.atan2(this.fwd.x, this.fwd.z);
@@ -362,6 +372,14 @@ export class Fish {
     this.u.uBend.value = this.bend;
     this.u.uFlap.value += dt * (spd < 1.5 ? 11 : 4);
     this.u.uIch.value = THREE.MathUtils.lerp(this.u.uIch.value, d.ich ?? 0, 0.05);
+    // Nefes: ağız ve solungaç kapakları ritmik olarak açılıp kapanır (stresle hızlanır)
+    this.breath += dt * (5 + d.stress * 0.05 + (world.o2 < 40 ? 4 : 0));
+    const breathe = 0.5 + 0.5 * Math.sin(this.breath);
+    const mouthT = Math.max(this.mouthTarget ?? 0, breathe * 0.12);
+    this.mouthOpen += (mouthT - this.mouthOpen) * Math.min(1, dt * (mouthT > this.mouthOpen ? 35 : 14));
+    this.u.uMouth.value = this.mouthOpen;
+    this.gill += (Math.max(this.gillTarget ?? 0, (1 - breathe) * 0.35) - this.gill) * Math.min(1, dt * 12);
+    this.u.uGill.value = this.gill;
     this.u.uPale.value = THREE.MathUtils.lerp(this.u.uPale.value, Math.max((100 - d.health) / 100, d.stress / 160), 0.05);
 
     // Dönüşüm
@@ -375,6 +393,11 @@ export class Fish {
     _q.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), roll));
     this.group.quaternion.slerp(_q, 0.5);
     this.group.position.copy(pos);
+    // Ağızdaki yem dudakların hemen içinde durur
+    if (this.feed?.food?.held === this) {
+      this.group.updateMatrixWorld();
+      this.feed.food.pos.copy(this.mouthWorld(_mw, 0.35));
+    }
   }
 
   boids(world, acc, w) {
@@ -393,10 +416,126 @@ export class Fish {
     if (ali.lengthSq() > 0) acc.addScaledVector(ali.normalize(), 0.9 * w);
   }
 
+  /** Ağız ucunun dünya konumu; `inset` ağız içine doğru (ağız boyu cinsinden) */
+  mouthWorld(out, inset = 0) {
+    out.copy(this.mouthLocal);
+    out.z -= inset * this.mouthSize() / Math.max(this.group.scale.x, 1e-3);
+    return this.group.localToWorld(out);
+  }
+
+  mouthSize() { return Math.max(0.12, this.total * 0.07); }
+
+  /**
+   * Yem yeme: yaklaş → dur ve nişan al → ağzı açıp emerek atıl → ağızda tut →
+   * yut (ya da büyük pulu ısırıp kalanını tükür).
+   */
+  updateFeeding(dt, world, food, seekTo) {
+    const d = this.data;
+    const sp = this.sp;
+    let fe = this.feed;
+    if (food && (!fe || fe.food !== food) && !(fe && (fe.phase === 'hold' || fe.phase === 'spit'))) {
+      fe = this.feed = { food, phase: 'approach', t: 0, aimT: 0 };
+    }
+    this.mouthTarget = 0;
+    this.gillTarget = 0;
+    this.faceDir = null;
+    this.feedSpeed = sp.cruise;
+    this.feedTurn = 4;
+    if (!fe) return;
+    const f = fe.food;
+    fe.t += dt;
+    const mouth = this.mouthWorld(_mw);
+    const toFood = _v2.subVectors(f.pos, mouth);
+    const dist = toFood.length();
+    const L = this.total;
+    const ms = this.mouthSize();
+    if ((f.eaten || (f.held && f.held !== this)) && fe.phase !== 'hold') { this.feed = null; return; }
+
+    switch (fe.phase) {
+      case 'approach':
+        seekTo(f.pos, 2.2);
+        this.feedSpeed = Math.min(sp.burst * 0.55, 2 + dist * 1.2);
+        this.feedTurn = 7;
+        if (dist < L * 1.4 + 0.6) {
+          fe.phase = 'aim'; fe.t = 0;
+          fe.aimT = (0.12 + Math.random() * 0.5) * (d.trait === 'Obur' ? 0.4 : 1);
+        }
+        break;
+      case 'aim': {
+        // dur, burnu yeme çevir; ağız hafifçe aralanır
+        seekTo(f.pos, 1);
+        this.feedSpeed = dist > L * 0.5 ? 1.2 : 0.3;
+        this.feedTurn = 10;
+        this.mouthTarget = 0.2;
+        this.faceDir = _fd.copy(toFood).normalize();
+        const aligned = this.fwd.angleTo(this.faceDir) < 0.4;
+        if ((fe.t > fe.aimT && aligned) || fe.t > fe.aimT + 1.2) { fe.phase = 'strike'; fe.t = 0; }
+        if (dist > L * 3) { fe.phase = 'approach'; fe.t = 0; }
+        break;
+      }
+      case 'strike':
+        // ani atılma + emme: ağız sonuna kadar açılır, yakındaki yem ağza akar
+        seekTo(f.pos, 4);
+        this.feedSpeed = sp.burst * 0.6;
+        this.feedTurn = 14;
+        this.mouthTarget = 1;
+        this.gillTarget = 0.8;
+        if (dist > 1e-3) this.faceDir = _fd.copy(toFood).normalize();
+        if (dist < L * 0.45 + ms * 2) {
+          const pull = Math.min(1, dt * (14 + 30 * (1 - dist / (L * 0.45 + ms * 2))));
+          f.pos.lerp(mouth, pull);
+          if (f.state === 'settled') f.state = 'sink';
+        }
+        if (dist < ms * 0.9) {
+          f.held = this;
+          fe.phase = 'hold'; fe.t = 0;
+          fe.holdT = 0.35 + Math.random() * 0.5;
+          // ağzına sığmayan pul: ısırılır, kalanı tükürülür
+          const flake = 0.2 * (f.size ?? 1);
+          fe.spit = flake > ms * 1.6 ? Math.random() < 0.75 : Math.random() < 0.12;
+        } else if (fe.t > 0.9) { fe.phase = 'aim'; fe.t = 0; fe.aimT = 0.15; }
+        break;
+      case 'hold':
+        // ağız kapanır, balık süzülür; solungaçlar çiğnerken pompalar
+        this.feedSpeed = 0.6;
+        this.feedTurn = 3;
+        this.mouthTarget = 0;
+        this.gillTarget = 0.5 + 0.5 * Math.sin(fe.t * 28);
+        if (fe.t > fe.holdT) {
+          if (fe.spit) {
+            fe.phase = 'spit'; fe.t = 0;
+          } else {
+            f.held = null;
+            f.eaten = true;
+            d.hunger = Math.max(0, d.hunger - 10 * Math.min(1.5, f.size ?? 1));
+            world.events.push({ type: 'eat', fish: this, food: f });
+            this.feed = null;
+          }
+        }
+        break;
+      case 'spit':
+        this.feedSpeed = 0.3;
+        this.mouthTarget = 1;
+        this.gillTarget = 1;
+        if (fe.t > 0.06 && f.held === this) {
+          // ısırılan parça yutuldu, kalan pul ağızdan fırlar
+          f.held = null;
+          f.size = (f.size ?? 1) * 0.6;
+          f.pos.copy(this.mouthWorld(_mw)).addScaledVector(this.fwd, ms * 1.5);
+          f.state = 'sink';
+          f.kick = this.fwd.clone().multiplyScalar(2.5);
+          d.hunger = Math.max(0, d.hunger - 4);
+          world.events.push({ type: 'eat', fish: this, food: null });
+        }
+        if (fe.t > 0.25) { this.feed = null; }
+        break;
+    }
+  }
+
   findFood(world) {
     let best = null, bd = 40;
     for (const f of world.food) {
-      if (f.eaten) continue;
+      if (f.eaten || f.held) continue;
       if (this.sp.bottom ? f.pos.y > 8 : f.state === 'settled') continue;
       const d = f.pos.distanceTo(this.pos);
       if (d < bd) { bd = d; best = f; }
