@@ -1,0 +1,11 @@
+Model Information:
+* title:	Paracheirodon Innesi _ Tetra Neon
+* source:	https://sketchfab.com/3d-models/paracheirodon-innesi---tetra-neon-2fabf5db754746b7b81ebfa0bbe99161
+* author:	BlueMesh (https://sketchfab.com/VapTor)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "Paracheirodon Innesi _ Tetra Neon" (https://sketchfab.com/3d-models/paracheirodon-innesi---tetra-neon-2fabf5db754746b7b81ebfa0bbe99161) by BlueMesh (https://sketchfab.com/VapTor) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)

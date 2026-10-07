@@ -3,6 +3,7 @@ import { TANK, HALF_W, HALF_D } from '../config.js';
 import { SPECIES } from './species.js';
 import { buildFish } from './fishGeometry.js';
 import { makeFishMaterials, makeFishUniforms } from './fishMaterial.js';
+import { REAL_FISH, makeRealFishMeshes } from './realModels.js';
 import { sandHeight } from '../world/substrate.js';
 
 const GEO_CACHE = {};
@@ -44,30 +45,36 @@ export class Fish {
     const pals = data.species === 'betta' ? BETTA_PALETTES : GUPPY_PALETTES;
     const pal = pals[(data.palette ?? 0) % pals.length];
     this.u = makeFishUniforms(geo.total, this.sp.pattern, b.length / geo.total, pal[0], pal[1], data.seed ?? Math.random() * 100);
-    const mats = makeFishMaterials(this.u);
-
     this.group = new THREE.Group();
     this.group.scale.setScalar(scale);
-    const body = new THREE.Mesh(geo.body, mats.body);
-    body.castShadow = true;
-    const fins = new THREE.Mesh(geo.fins, mats.fins);
-    fins.renderOrder = 7;
-    this.group.add(body, fins);
-    this.body = body;
+    if (REAL_FISH[data.species]) {
+      // Gerçek 3D model (Sketchfab, CC-BY)
+      const meshes = makeRealFishMeshes(data.species, this.u);
+      this.group.add(...meshes);
+      this.body = meshes[0];
+    } else {
+      const mats = makeFishMaterials(this.u);
+      const body = new THREE.Mesh(geo.body, mats.body);
+      body.castShadow = true;
+      const fins = new THREE.Mesh(geo.fins, mats.fins);
+      fins.renderOrder = 7;
+      this.group.add(body, fins);
+      this.body = body;
 
-    // Gözler: parlak siyah göz bebeği + renkli iris halkası
-    const eyeMat = new THREE.MeshPhysicalMaterial({ color: 0x020203, roughness: 0.05, clearcoat: 1, clearcoatRoughness: 0 });
-    const irisCol = { neon: 0x6f8fa8, cory: 0x9a7430, angel: 0xa02818, danio: 0xb0a070 }[data.species] ?? 0x8a8a80;
-    const irisMat = new THREE.MeshStandardMaterial({ color: irisCol, metalness: 0.6, roughness: 0.3 });
-    for (const s of [-1, 1]) {
-      const e = new THREE.Mesh(new THREE.SphereGeometry(geo.eye.r, 14, 10), eyeMat);
-      e.position.set(s * geo.eye.x, geo.eye.y, geo.eye.z);
-      e.scale.set(0.55, 1, 1);
-      const ring = new THREE.Mesh(new THREE.TorusGeometry(geo.eye.r * 0.9, geo.eye.r * 0.2, 6, 18), irisMat);
-      ring.position.copy(e.position);
-      ring.position.x += s * geo.eye.r * 0.18;
-      ring.rotation.y = Math.PI / 2;
-      this.group.add(e, ring);
+      // Gözler: parlak siyah göz bebeği + renkli iris halkası
+      const eyeMat = new THREE.MeshPhysicalMaterial({ color: 0x020203, roughness: 0.05, clearcoat: 1, clearcoatRoughness: 0 });
+      const irisCol = { neon: 0x6f8fa8, cory: 0x9a7430, angel: 0xa02818, danio: 0xb0a070 }[data.species] ?? 0x8a8a80;
+      const irisMat = new THREE.MeshStandardMaterial({ color: irisCol, metalness: 0.6, roughness: 0.3 });
+      for (const s of [-1, 1]) {
+        const e = new THREE.Mesh(new THREE.SphereGeometry(geo.eye.r, 14, 10), eyeMat);
+        e.position.set(s * geo.eye.x, geo.eye.y, geo.eye.z);
+        e.scale.set(0.55, 1, 1);
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(geo.eye.r * 0.9, geo.eye.r * 0.2, 6, 18), irisMat);
+        ring.position.copy(e.position);
+        ring.position.x += s * geo.eye.r * 0.18;
+        ring.rotation.y = Math.PI / 2;
+        this.group.add(e, ring);
+      }
     }
 
     const p = data.pos ?? [0, TANK.water * 0.6, 0];

@@ -34,6 +34,10 @@ Kaydı sıfırlamak için tarayıcı konsolunda `vivarium.reset()`. Su yüzeyi y
 
 `public/textures/` içindeki kum, taş, kök, zemin, dolap ve duvar dokuları ile `hotel_room_1k.hdr` ortam ışığı [Poly Haven](https://polyhaven.com)'dan alınmıştır (CC0, kamu malı). Anubias modeli Poly Haven'ın `anthurium_botany_01` modelinden, vallisneria yaprak dokusu `grass_bermuda_01`'den gelir (`public/models/plants/`, CC0). UV'si olmayan taş ve çakıllarda üç eksenli (triplanar) yansıtma kullanılır.
 
+## 3D model atıfları (CC-BY 4.0)
+
+- Neon tetra: "[Paracheirodon Innesi _ Tetra Neon](https://sketchfab.com/3d-models/paracheirodon-innesi---tetra-neon-2fabf5db754746b7b81ebfa0bbe99161)" — [BlueMesh](https://sketchfab.com/VapTor), [CC-BY 4.0](http://creativecommons.org/licenses/by/4.0/). Oyunda iskelet animasyonu yerine kendi yüzme shader'ımıza uyarlandı.
+
 ## Yapı
 
 - `src/render/` — sahne, cam, su (emilim, kostik, yüzey, ışık huzmeleri), partiküller, post-processing

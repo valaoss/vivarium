@@ -5,7 +5,7 @@ export const FISH_SHARED = {
   uNight: { value: 0 },
 };
 
-const SWIM_VERT_DECL = /* glsl */ `
+export const SWIM_VERT_DECL = /* glsl */ `
   attribute vec4 aSeg;
   uniform float uPhase;
   uniform float uAmp;
@@ -16,7 +16,7 @@ const SWIM_VERT_DECL = /* glsl */ `
   varying vec3 vObjPos;
 `;
 
-const SWIM_VERT = /* glsl */ `
+export const SWIM_VERT = /* glsl */ `
   vSeg = aSeg;
   vObjPos = transformed;
   {
@@ -38,7 +38,7 @@ const SWIM_VERT = /* glsl */ `
   }
 `;
 
-const PATTERN_DECL = /* glsl */ `
+export const PATTERN_DECL = /* glsl */ `
   uniform float uPattern;
   uniform float uSeed;
   uniform float uBodyFrac;
