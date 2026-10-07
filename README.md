@@ -32,7 +32,7 @@ Kaydı sıfırlamak için tarayıcı konsolunda `vivarium.reset()`. Su yüzeyi y
 
 ## Dokular
 
-`public/textures/` içindeki kum, taş, kök, zemin, dolap ve duvar dokuları ile `hotel_room_1k.hdr` ortam ışığı [Poly Haven](https://polyhaven.com)'dan alınmıştır (CC0, kamu malı). Anubias modeli Poly Haven'ın `anthurium_botany_01` modelinden, vallisneria yaprak dokusu `grass_bermuda_01`'den gelir (`public/models/plants/`, CC0). UV'si olmayan taş ve çakıllarda üç eksenli (triplanar) yansıtma kullanılır.
+`public/textures/` içindeki kum, taş, kök, zemin, dolap ve duvar dokuları ile `hotel_room_1k.hdr` ortam ışığı [Poly Haven](https://polyhaven.com)'dan alınmıştır (CC0, kamu malı). Vallisneria yaprak dokusu `grass_bermuda_01`'den gelir (`public/models/plants/`, CC0). UV'si olmayan taş ve çakıllarda üç eksenli (triplanar) yansıtma kullanılır.
 
 ## 3D model atıfları (CC-BY 4.0)
 
@@ -40,7 +40,6 @@ Kaydı sıfırlamak için tarayıcı konsolunda `vivarium.reset()`. Su yüzeyi y
 - Lepistes (erkek): "[Guppy Fish](https://sketchfab.com/3d-models/21e14e4b961e406385539f79eacdb1dc)" — BlueMesh, CC-BY 4.0
 - Lepistes (dişi): "[Guppy ♀](https://sketchfab.com/3d-models/feab250d4ab544de8eb7fda9fc1c2978)" — Nestaeric, CC-BY 4.0
 - Beta: "[Betta Splendens](https://sketchfab.com/3d-models/f4eeb7f50ad24873842bd954ad27d23b)" — BlueMesh, CC-BY 4.0
-- Nerit salyangoz kabuğu: "[Black and White Nerite Shell](https://sketchfab.com/3d-models/c3b2ba55a35946608814d0db896cbe58)" — RISDNaturelab, CC-BY 4.0
 - Anubias: "[Plants Anubias](https://sketchfab.com/3d-models/2ba1d06a191b437e848b81b2981a9e02)" — Pala_002, CC-BY 4.0
 - Kök: "[Real Aquarium Wood 3D scan](https://sketchfab.com/3d-models/c53807eff7c4427faacfde6c1b581532)" — zdenkoroman, CC-BY 4.0
 

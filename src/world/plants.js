@@ -137,10 +137,10 @@ function gltfPlantShader(shader) {
     .replace('#include <common>', '#include <common>\nuniform float uTime;\nuniform float uPhase;')
     .replace('#include <begin_vertex>', `#include <begin_vertex>
       {
-        float h = clamp(position.y / 0.45, 0.0, 1.2);
+        float h = clamp(position.y, 0.0, 1.2);
         float b = h * h;
-        transformed.x += sin(uTime * 0.8 + uPhase + position.z * 6.0) * b * 0.014;
-        transformed.z += cos(uTime * 0.6 + uPhase * 1.3 + position.x * 5.0) * b * 0.01;
+        transformed.x += sin(uTime * 0.8 + uPhase + position.z * 2.7) * b * 0.035;
+        transformed.z += cos(uTime * 0.6 + uPhase * 1.3 + position.x * 2.2) * b * 0.025;
       }`);
   shader.fragmentShader = shader.fragmentShader
     .replace('#include <common>', `#include <common>
@@ -158,20 +158,30 @@ function gltfPlantShader(shader) {
       }`);
 }
 
+// Anubias (Pala_002, CC-BY): üç ayrı bitki; her biri yaprak malzemesine göre birkaç parça
 const anubiasModel = { proto: null, pending: [] };
-new GLTFLoader().load(`${MODEL_BASE}anthurium_botany_01/anthurium_botany_01_1k.gltf`, (gltf) => {
-  const geos = [];
-  let material = null;
-  gltf.scene.traverse((o) => {
-    if (!o.isMesh) return;
-    const g = o.geometry.clone();
-    g.computeBoundingBox();
-    const c = g.boundingBox.getCenter(new THREE.Vector3());
-    g.translate(-c.x, -g.boundingBox.min.y, -c.z);
-    geos.push(g);
-    material = o.material;
-  });
-  anubiasModel.proto = { geos, material };
+new GLTFLoader().load(`${import.meta.env.BASE_URL}models/decor/anubias.glb`, (gltf) => {
+  gltf.scene.updateMatrixWorld(true);
+  const variants = [];
+  for (const node of gltf.scene.children) {
+    const parts = [];
+    const box = new THREE.Box3();
+    node.traverse((o) => {
+      if (!o.isMesh) return;
+      const g = o.geometry.clone();
+      g.applyMatrix4(o.matrixWorld);
+      g.computeBoundingBox();
+      box.union(g.boundingBox);
+      parts.push({ geo: g, material: o.material });
+    });
+    if (!parts.length) continue;
+    // tabanı 0'a, yüksekliği 1'e
+    const c = box.getCenter(new THREE.Vector3());
+    const h = box.max.y - box.min.y;
+    for (const p of parts) { p.geo.translate(-c.x, -box.min.y, -c.z); p.geo.scale(1 / h, 1 / h, 1 / h); }
+    variants.push(parts);
+  }
+  anubiasModel.proto = { variants };
   for (const fn of anubiasModel.pending) fn();
   anubiasModel.pending.length = 0;
 });
@@ -221,21 +231,25 @@ export function createPlants(scene) {
   const col = new THREE.Color();
 
   function buildAnubias(plant) {
-    const { geos, material } = anubiasModel.proto;
+    const { variants } = anubiasModel.proto;
     const r = mulberry(plant.seed + 7);
-    const m = material.clone();
-    m.side = THREE.DoubleSide;
-    m.alphaTest = 0.5;
-    m.transparent = false;
-    m.color = new THREE.Color(0.62, 0.78, 0.6); // Anubias: daha koyu, mavimsi yeşil
-    patchUnderwater(m, { key: 'gltf-plant', extra: gltfPlantShader, uniforms: { uHealth: plant.uHealth, uPhase: { value: r() * 6.28 } } });
-    const mesh = new THREE.Mesh(geos[Math.floor(r() * geos.length)], m);
-    mesh.rotation.y = r() * Math.PI * 2;
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-    group.add(mesh);
-    plant.model = mesh;
-    plant.extra.push(mesh);
+    const uni = { uHealth: plant.uHealth, uPhase: { value: r() * 6.28 } };
+    const root = new THREE.Group();
+    for (const part of variants[Math.floor(r() * variants.length)]) {
+      const m = part.material.clone();
+      m.side = THREE.DoubleSide;
+      m.alphaTest = 0.5;
+      m.transparent = false;
+      patchUnderwater(m, { key: 'gltf-plant', extra: gltfPlantShader, uniforms: uni });
+      const mesh = new THREE.Mesh(part.geo, m);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      root.add(mesh);
+    }
+    root.rotation.y = r() * Math.PI * 2;
+    group.add(root);
+    plant.model = root;
+    plant.extra.push(root);
     layout(plant);
   }
 
@@ -243,7 +257,7 @@ export function createPlants(scene) {
     if (plant.type === 'anubias') {
       plant.uHealth.value = plant.health;
       if (plant.model) {
-        plant.model.scale.setScalar(26 * (0.55 + 0.45 * plant.growth));
+        plant.model.scale.setScalar(9 * (0.55 + 0.45 * plant.growth));
         plant.model.position.set(plant.x, plant.y, plant.z);
       }
       return;
