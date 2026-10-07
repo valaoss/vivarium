@@ -15,6 +15,7 @@ export const SWIM_VERT_DECL = /* glsl */ `
   uniform float uMouth;
   uniform float uMouthY;
   uniform float uGill;
+  uniform float uEel;
   varying vec4 vSeg;
   varying vec3 vObjPos;
 `;
@@ -38,8 +39,9 @@ export const SWIM_VERT = /* glsl */ `
   }
   {
     float s = aSeg.x;
-    float env = 0.03 + s * s * 1.05;
-    float wave = sin(uPhase - s * 5.2);
+    // karangiform (çoğu balık): dalga arkada büyür; angiliform (kuhli): bütün gövde kıvrılır
+    float env = mix(0.03 + s * s * 1.05, 0.3 + 0.7 * s, uEel);
+    float wave = sin(uPhase - s * mix(5.2, 11.0, uEel));
     float lat = (uAmp * wave * env + uBend * s * s) * uLen;
     if (aSeg.z > 0.5 && aSeg.z < 1.5) {
       // yüzgeç zarının dalgalanması
@@ -355,6 +357,7 @@ export function makeFishUniforms(len, pattern, bodyFrac, colA, colB, seed) {
     uMouth: { value: 0 },
     uMouthY: { value: 0 },
     uGill: { value: 0 },
+    uEel: { value: 0 },
     uPattern: { value: pattern },
     uSeed: { value: seed },
     uBodyFrac: { value: bodyFrac },

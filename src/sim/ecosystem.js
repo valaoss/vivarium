@@ -6,7 +6,7 @@ export function newWater() {
 }
 
 export function quality(w) {
-  const q = 100 - w.waste * 2.2 - Math.max(0, w.nitrate - 15) * 0.9 - w.algae * 0.1;
+  const q = 100 - w.waste * 1.5 - Math.max(0, w.nitrate - 20) * 0.6 - w.algae * 0.1;
   return Math.max(0, Math.min(100, q));
 }
 
@@ -38,11 +38,12 @@ export function tick(state, dtMin, ctx) {
 
   // Atık → filtre → nitrat
   w.waste += bioload * 0.9 * h;
-  const removed = w.waste * (1 - Math.exp(-0.35 * h));
+  // Olgun filtre atığı hızla işler; nitrat yavaş birikir (su değişimi ~3 oyun gününde bir)
+  const removed = w.waste * (1 - Math.exp(-0.8 * h));
   w.waste -= removed;
-  w.nitrate += removed * 0.6;
+  w.nitrate += removed * 0.25;
   // Bitkiler nitrat tüketir
-  w.nitrate = Math.max(0, w.nitrate - plantUptake * 0.12 * h * (0.3 + light * 0.7));
+  w.nitrate = Math.max(0, w.nitrate - plantUptake * 0.2 * h * (0.3 + light * 0.7));
 
   // Yosun: fazla besin + ışık; bitkiler ve karidesler baskılar
   const algaeGrow = (0.04 * Math.max(w.nitrate - 5, 0) + ctx.leftovers * 0.05 + 0.05) * light;

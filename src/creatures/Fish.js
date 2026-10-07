@@ -17,6 +17,15 @@ const GUPPY_PALETTES = [
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _m = new THREE.Matrix4(), _up = new THREE.Vector3(0, 1, 0);
 const _x = new THREE.Vector3(), _y = new THREE.Vector3(), _q = new THREE.Quaternion(), _mw = new THREE.Vector3(), _fd = new THREE.Vector3();
 
+// Yüzme tarzı: burst = kuyruk vuruşu + süzülme (danio, tetra), steady = sürekli,
+// hover = yavaş, yerinde asılı kalabilen (beta, melek), eel = yılan gibi (kuhli), hop = tabanda zıplayıp durma
+const GAIT = {
+  neon: 'burst', cardinal: 'burst', danio: 'burst', rasbora: 'burst', barb: 'burst',
+  guppy: 'steady', platy: 'steady', molly: 'steady', swordtail: 'steady',
+  betta: 'hover', gourami: 'hover', angel: 'hover',
+  kuhli: 'eel', cory: 'hop', oto: 'hop',
+};
+
 export const STATE_LABEL = {
   wander: 'Dolaşıyor', school: 'Sürüyle yüzüyor', seek: 'Yem arıyor', eat: 'Yiyor', flee: 'Kaçıyor',
   sleep: 'Uyuyor', air: 'Yüzeyden hava alıyor', hide: 'Saklanıyor', forage: 'Kumu eşeliyor', curious: 'Seni izliyor', rest: 'Dinleniyor',
@@ -87,6 +96,14 @@ export class Fish {
     this.gill = 0;
     this.breath = Math.random() * 6;
     this.feed = null;
+    this.gait = GAIT[data.species] ?? 'steady';
+    this.u.uEel.value = this.gait === 'eel' ? 1 : 0;
+    this.beat = 0;
+    this.coast = Math.random();
+    this.thrust = 1;
+    this.cstart = 0;
+    this.cside = 1;
+    this.wasFleeing = false;
 
     const p = data.pos ?? [0, TANK.water * 0.6, 0];
     this.pos = new THREE.Vector3(...p);
@@ -324,10 +341,45 @@ export class Fish {
     // balıklar çoğunlukla yatay yüzer
     if (!sp.bottom && state !== 'air') acc.y *= 0.6;
 
+    // --- Kaçış refleksi (C-start): gövde önce C şeklinde bükülür, sonra fırlar ---
+    const fleeing = state === 'flee';
+    if (fleeing && !this.wasFleeing) {
+      this.cstart = 0.14;
+      this.cside = Math.sign(this.fwd.x * this.fleeDir.z - this.fwd.z * this.fleeDir.x) || 1;
+    }
+    this.wasFleeing = fleeing;
+    if (this.cstart > 0) {
+      this.cstart -= dt;
+      speed = 0.5;
+      maxTurn = 22;
+    }
+
+    // --- Yürüyüş ritmi ---
+    const calm = !fleeing && state !== 'seek' && state !== 'eat' && state !== 'hunt' && state !== 'chase';
+    this.thrust = 1;
+    if (calm && (this.gait === 'burst' || this.gait === 'hop')) {
+      if (this.coast > 0) {
+        this.coast -= dt;
+        this.thrust = 0;
+        if (this.coast <= 0) this.beat = this.gait === 'hop' ? 0.18 + Math.random() * 0.2 : 0.15 + Math.random() * 0.25;
+      } else {
+        this.beat -= dt;
+        if (this.beat <= 0) {
+          const need = Math.min(1, speed / sp.burst);
+          this.coast = this.gait === 'hop' ? 0.8 + Math.random() * 2.5 : (0.25 + Math.random() * 0.7) * (1 - need * 0.6);
+        }
+      }
+      speed *= this.thrust ? 1.6 : 0;
+    } else if (calm && this.gait === 'hover') {
+      speed *= 0.75 + 0.25 * Math.sin(this.gaitT = (this.gaitT ?? Math.random() * 9) + dt * 0.7);
+    }
+
     // --- Hız ve yön ---
     if (acc.lengthSq() > 1e-6) acc.normalize();
     const desired = _v2.copy(acc).multiplyScalar(speed);
-    const accel = state === 'flee' ? 60 : state === 'seek' ? 25 : 8;
+    let accel = state === 'flee' ? 60 : state === 'seek' ? 25 : 8;
+    if (!this.thrust) accel = 5;                         // süzülme: su direnciyle yavaşlar
+    else if (this.gait === 'burst' && calm) accel = 30;  // kısa ve sert kuyruk vuruşu
     const dv = desired.sub(this.vel);
     const dvl = dv.length();
     if (dvl > accel * dt) dv.multiplyScalar((accel * dt) / dvl);
@@ -365,10 +417,17 @@ export class Fish {
 
     // --- Animasyon parametreleri ---
     const k = Math.min(spd / sp.burst, 1);
-    const freq = 5 + spd * 1.5 + (state === 'flee' ? 10 : 0);
+    const eel = this.gait === 'eel';
+    let freq = (eel ? 3 : 5) + spd * (eel ? 0.9 : 1.5) + (state === 'flee' ? 10 : 0);
+    let amp = 0.035 + k * 0.13 + (spd < 0.8 ? 0.01 : 0);
+    if (!this.thrust) { amp = 0.008; freq *= 0.4; }                  // süzülürken gövde düz
+    else if (this.gait === 'burst' && calm) { amp += 0.06; freq += 6; }
+    if (this.gait === 'hover' && spd < 1.5) amp *= 0.5;             // yerinde asılı: yalnız yüzgeçler
     this.u.uPhase.value += dt * freq;
-    this.u.uAmp.value = THREE.MathUtils.lerp(this.u.uAmp.value, 0.035 + k * 0.13 + (spd < 0.8 ? 0.01 : 0), 0.1);
-    this.bend = THREE.MathUtils.lerp(this.bend, THREE.MathUtils.clamp(-this.yawRate * 0.09, -0.35, 0.35), 0.15);
+    this.u.uAmp.value = THREE.MathUtils.lerp(this.u.uAmp.value, amp, this.thrust ? 0.2 : 0.06);
+    const turnBend = THREE.MathUtils.clamp(-this.yawRate * 0.09, -0.35, 0.35);
+    const bendT = this.cstart > 0 ? this.cside * 1.1 : turnBend;
+    this.bend = THREE.MathUtils.lerp(this.bend, bendT, this.cstart > 0 ? 0.45 : 0.15);
     this.u.uBend.value = this.bend;
     this.u.uFlap.value += dt * (spd < 1.5 ? 11 : 4);
     this.u.uIch.value = THREE.MathUtils.lerp(this.u.uIch.value, d.ich ?? 0, 0.05);
