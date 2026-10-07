@@ -115,7 +115,11 @@ export function createTank(scene) {
   const right = left.clone();
   right.rotation.y = Math.PI / 2;
   right.position.x = HALF_W + g * 0.5;
-  group.add(left, right);
+  // Arka cam: yan camlarla aynı malzeme
+  const backGlass = new THREE.Mesh(new THREE.PlaneGeometry(TANK.w + 2 * g, TANK.h + g), sideMat);
+  backGlass.position.set(0, (TANK.h - g) / 2, -HALF_D - g * 0.5);
+  backGlass.renderOrder = 10;
+  group.add(left, right, backGlass);
 
   // Cam kenarları: kalın camın yeşilimsi kesiti
   const edgeMat = new THREE.MeshPhysicalMaterial({
@@ -158,12 +162,13 @@ export function createTank(scene) {
     group.add(s);
   }
 
-  // Arka fon: koyu lacivert-siyah folyo (gerçek akvaryumlardaki gibi)
+  // Arka fon: koyu lacivert-siyah folyo (gerçek akvaryumlardaki gibi).
+  // Tek yüzlü: önden siyah fon görünür, arkadan bakınca cam gibi tankın içi görünür.
   const film = new THREE.Mesh(
     new THREE.PlaneGeometry(TANK.w + 2 * g, TANK.h + g),
     new THREE.MeshStandardMaterial({ color: 0x03070a, roughness: 0.75, metalness: 0 }),
   );
-  film.position.set(0, (TANK.h - g) / 2, -HALF_D - g);
+  film.position.set(0, (TANK.h - g) / 2, -HALF_D - g * 1.05);
   group.add(film);
 
   // Lamba armatürü: ince alüminyum gövde, altı parlak

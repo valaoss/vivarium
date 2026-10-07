@@ -51,6 +51,18 @@ export function createSubstrate(scene) {
     map: sandSet.map, roughness: 1, color: new THREE.Color(1.5, 1.38, 1.15),
   }), { key: 'sandside', caustics: false });
   group.add(new THREE.Mesh(sideGeo, sideMat));
+  // Arka kesit (tankın arkasından bakınca görünür)
+  const backGeo = new THREE.PlaneGeometry(TANK.w - 0.1, 1, segX, 1);
+  backGeo.rotateY(Math.PI);
+  const bp = backGeo.attributes.position;
+  for (let i = 0; i < bp.count; i++) {
+    const x = bp.getX(i);
+    const top = bp.getY(i) > 0;
+    bp.setY(i, top ? sandHeight(x, -HALF_D + 0.06) : 0);
+    bp.setZ(i, -HALF_D + 0.06);
+  }
+  backGeo.computeVertexNormals();
+  group.add(new THREE.Mesh(backGeo, sideMat));
   for (const sx of [-1, 1]) {
     const lg = new THREE.PlaneGeometry(TANK.d - 0.1, 1, segZ, 1);
     const lp = lg.attributes.position;

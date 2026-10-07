@@ -29,11 +29,9 @@ export function createControls(camera, dom) {
   c.dampingFactor = 0.07;
   c.enablePan = false;
   c.minDistance = 30;
-  c.maxDistance = 320;
+  c.maxDistance = 190;
   c.minPolarAngle = 0.55;
   c.maxPolarAngle = 1.72;
-  c.minAzimuthAngle = -1.1;
-  c.maxAzimuthAngle = 1.1;
   c.rotateSpeed = 0.55;
   c.zoomSpeed = 0.8;
   c.update();
@@ -62,22 +60,21 @@ export function createRoom(scene, renderer) {
 
   // Duvarlar
   const wallMat = new THREE.MeshStandardMaterial({ ...pbrSet('beige_wall_001', [3, 1.5]), color: 0x8a8378 });
-  const back = new THREE.Mesh(new THREE.PlaneGeometry(600, 300), wallMat);
-  back.position.set(0, floorY + 150, -60);
-  back.receiveShadow = true;
-  scene.add(back);
-  const left = new THREE.Mesh(new THREE.PlaneGeometry(400, 300), wallMat);
-  left.rotation.y = Math.PI / 2;
-  left.position.set(-180, floorY + 150, 120);
-  scene.add(left);
-
-  // Süpürgelik
-  const skirting = new THREE.Mesh(
-    new THREE.BoxGeometry(600, 8, 1.5),
-    new THREE.MeshStandardMaterial({ color: 0xd8d0c4, roughness: 0.6 }),
-  );
-  skirting.position.set(0, floorY + 4, -59.2);
-  scene.add(skirting);
+  // Tank odanın ortasında: kamera her yönden dönebilsin diye dört duvar
+  const R = 230;
+  const skirtMat = new THREE.MeshStandardMaterial({ color: 0xd8d0c4, roughness: 0.6 });
+  for (let i = 0; i < 4; i++) {
+    const a = i * Math.PI / 2;
+    const wall = new THREE.Mesh(new THREE.PlaneGeometry(2 * R, 300), wallMat);
+    wall.position.set(-Math.sin(a) * R, floorY + 150, -Math.cos(a) * R);
+    wall.rotation.y = a;
+    wall.receiveShadow = true;
+    scene.add(wall);
+    const skirting = new THREE.Mesh(new THREE.BoxGeometry(2 * R, 8, 1.5), skirtMat);
+    skirting.position.set(-Math.sin(a) * (R - 0.8), floorY + 4, -Math.cos(a) * (R - 0.8));
+    skirting.rotation.y = a;
+    scene.add(skirting);
+  }
 
   // Dolap (koyu ceviz)
   const cabW = TANK.w + 8, cabD = TANK.d + 8, cabH = 70;

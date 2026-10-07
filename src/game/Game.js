@@ -580,10 +580,10 @@ export class Game {
     this.fx.bokeh.enabled = on;
     const c = this.controls;
     if (on) {
-      this.savedLimits = { a: [c.minAzimuthAngle, c.maxAzimuthAngle], d: c.minDistance };
-      c.minAzimuthAngle = -Infinity; c.maxAzimuthAngle = Infinity; c.minDistance = 12;
+      this.savedLimits = { d: c.minDistance };
+      c.minDistance = 12;
     } else if (this.savedLimits) {
-      [c.minAzimuthAngle, c.maxAzimuthAngle] = this.savedLimits.a; c.minDistance = this.savedLimits.d;
+      c.minDistance = this.savedLimits.d;
     }
     this.emit('photo', on);
   }
@@ -733,7 +733,7 @@ export class Game {
     const vfov = THREE.MathUtils.degToRad(this.camera.fov);
     const hfov = 2 * Math.atan(Math.tan(vfov / 2) * aspect);
     const need = Math.max(108, (TANK.w / 2 + 8) / Math.tan(hfov / 2));
-    this.controls.maxDistance = Math.max(170, need * 1.4);
+    this.controls.maxDistance = Math.min(200, Math.max(170, need * 1.4));
     if (this.photo) return;
     const dir = this.camera.position.clone().sub(this.controls.target);
     if (dir.length() < need * 0.98 || aspect < 1) dir.setLength(need);
