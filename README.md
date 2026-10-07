@@ -43,7 +43,7 @@ Kaydı sıfırlamak için tarayıcı konsolunda `vivarium.reset()`. Su yüzeyi y
 - Anubias: "[Plants Anubias](https://sketchfab.com/3d-models/2ba1d06a191b437e848b81b2981a9e02)" — Pala_002, CC-BY 4.0
 - Kök: "[Real Aquarium Wood 3D scan](https://sketchfab.com/3d-models/c53807eff7c4427faacfde6c1b581532)" — zdenkoroman, CC-BY 4.0
 
-CC0 (atıf gerekmez, teşekkürler): ffishAsia & floraZia taramaları (kılıçkuyruk, medaka, loach, karides), Poly Haven `rock_07`, `rock_09`, `dead_quiver_branch_01`. Modeller telefon için sadeleştirildi ve dokuları WebP'ye çevrildi.
+CC0 (atıf gerekmez, teşekkürler): ffishAsia & floraZia taramaları (kılıçkuyruk; medaka gövdesi zebra danio, kiraz barbus ve harlequin rasbora desenleriyle; loach gövdesi kuhli deseniyle; karides), Poly Haven `rock_07`, `rock_09`, `dead_quiver_branch_01`. Modeller telefon için sadeleştirildi ve dokuları WebP'ye çevrildi.
 
 ## Yapı
 

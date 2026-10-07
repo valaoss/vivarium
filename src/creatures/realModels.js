@@ -40,6 +40,11 @@ const SOURCES = {
     url: 'models/creatures/swordtail.glb',
     credit: '“CC0 Green Swordtail, Xiphophorus helleri” — ffishAsia & floraZia (CC0)',
   },
+  // Gerçek balık taramaları üzerine türün renk ve deseni giydirilir (overlay)
+  danio: { species: 'danio', axis: 'x', flip: true, overlay: 1, url: 'models/creatures/medaka.glb', credit: '“CC0 Rice Fish (medaka)” — ffishAsia & floraZia (CC0), zebra danio deseniyle' },
+  kuhli: { species: 'kuhli', axis: 'x', flip: true, overlay: 2, url: 'models/creatures/loach.glb', credit: '“CC0 Japanese Common Loach” — ffishAsia & floraZia (CC0), kuhli deseniyle' },
+  barb: { species: 'barb', axis: 'x', flip: true, overlay: 3, url: 'models/creatures/medaka.glb', credit: '“CC0 Rice Fish (medaka)” — ffishAsia & floraZia (CC0), kiraz barbus deseniyle' },
+  rasbora: { species: 'rasbora', axis: 'x', flip: true, overlay: 4, url: 'models/creatures/medaka.glb', credit: '“CC0 Rice Fish (medaka)” — ffishAsia & floraZia (CC0), harlequin deseniyle' },
 };
 
 /** Bir balık için kullanılacak model anahtarı (yoksa null → prosedürel) */
@@ -100,7 +105,7 @@ function prepare(gltf, key, src) {
     p.geo.setAttribute('aSeg', new THREE.BufferAttribute(seg, 4));
     if (!p.geo.attributes.normal) p.geo.computeVertexNormals();
   }
-  return { parts, total, credit: src.credit, mouth: findMouth(parts[0].geo, total) };
+  return { parts, total, credit: src.credit, overlay: src.overlay ?? 0, mouth: findMouth(parts[0].geo, total) };
 }
 
 /** Ağız ucu: burnun en öndeki köşelerinin ortalaması (yerel koordinat) */
@@ -118,6 +123,32 @@ const REAL_FRAG = /* glsl */ `
     float u = vSeg.x / uBodyFrac;
     float v = vSeg.y;
     vec3 c = diffuseColor.rgb;
+    float lum = dot(c, vec3(0.3, 0.59, 0.11));
+    float body = smoothstep(0.08, 0.16, u) * smoothstep(1.02, 0.9, u);
+    if (uOverlay > 0.5 && uOverlay < 1.5) {
+      // zebra danio: altın gövde, yatay lacivert şeritler
+      vec3 gold = lum * vec3(1.25, 1.1, 0.72) * 1.25;
+      float st = 0.0;
+      for (int k = 0; k < 4; k++) st = max(st, smoothstep(0.075, 0.035, abs(v - (-0.5 + float(k) * 0.3))));
+      c = mix(gold, lum * vec3(0.25, 0.32, 0.9) * 1.6, st * body);
+    } else if (uOverlay > 1.5 && uOverlay < 2.5) {
+      // kuhli: somon turuncusu, sırttan inen koyu kuşaklar
+      vec3 salmon = vec3(1.0, 0.56, 0.3) * (0.25 + lum * 1.6);
+      float sad = smoothstep(0.1, 0.35, sin(u * 3.14159 * 13.0 + 0.6)) * smoothstep(-0.55, -0.2, v);
+      c = mix(salmon, vec3(0.06, 0.04, 0.03), sad * body * 0.92);
+      c = mix(c, lum * vec3(1.5, 1.25, 1.0), smoothstep(-0.55, -0.85, v) * 0.6);
+    } else if (uOverlay > 2.5 && uOverlay < 3.5) {
+      // kiraz barbus: kırmızı gövde, yan çizgide koyu şerit
+      vec3 red = vec3(1.0, 0.2, 0.16) * (0.22 + lum * 1.5);
+      float lat = smoothstep(0.08, 0.03, abs(v - 0.05)) * smoothstep(0.1, 0.2, u);
+      c = mix(red, vec3(0.12, 0.04, 0.04), lat * body * 0.85);
+    } else if (uOverlay > 3.5) {
+      // harlequin rasbora: bakır-pembe gövde, arkada siyah üçgen
+      vec3 copper = vec3(1.0, 0.52, 0.36) * (0.3 + lum * 1.55);
+      float t = (u - 0.42) / 0.5;
+      float tri = smoothstep(-0.05, 0.05, t) * smoothstep(1.05, 0.9, t) * smoothstep(0.42 * (1.0 - t) + 0.14, 0.42 * (1.0 - t) + 0.02, abs(v + 0.08 - t * 0.12));
+      c = mix(copper, vec3(0.03, 0.02, 0.03), tri * 0.9);
+    }
     float ich = smoothstep(0.8, 0.88, fn(vec2(u * 60.0, v * 18.0) + uSeed * 3.0)) * uIch;
     c = mix(c, vec3(0.95, 0.95, 0.92), ich * step(0.3, diffuseColor.a));
     float g = dot(c, vec3(0.3, 0.59, 0.11));
@@ -141,13 +172,13 @@ export function makeRealFishMeshes(key, fishUniforms) {
     m.alphaTest = 0.04;
     patchUnderwater(m, {
       key: 'real-fish',
-      uniforms: { ...fishUniforms, ...FISH_SHARED },
+      uniforms: { ...fishUniforms, ...FISH_SHARED, uOverlay: { value: real.overlay } },
       extra: (sh) => {
         sh.vertexShader = sh.vertexShader
           .replace('#include <common>', '#include <common>\n' + SWIM_VERT_DECL)
           .replace('#include <begin_vertex>', '#include <begin_vertex>\n' + SWIM_VERT);
         sh.fragmentShader = sh.fragmentShader
-          .replace('#include <common>', '#include <common>\n' + PATTERN_DECL)
+          .replace('#include <common>', '#include <common>\n' + PATTERN_DECL + '\nuniform float uOverlay;')
           .replace('#include <color_fragment>', '#include <color_fragment>\n' + REAL_FRAG + MOUTH_FRAG)
           .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
             totalEmissiveRadiance += vec3(0.25, 0.6, 1.0) * uHighlight * 0.12;`);
