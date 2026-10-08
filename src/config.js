@@ -8,6 +8,13 @@ export const TANK = { glass: 0.6 };
 export let HALF_W = 30;
 export let HALF_D = 15;
 
+// Teraryum gibi başka bir kafes için ölçüleri doğrudan ayarla
+export function setEnclosure(t) {
+  Object.assign(TANK, { vol: 1, sx: 1, sy: 1, sz: 1 }, t);
+  HALF_W = t.w / 2;
+  HALF_D = t.d / 2;
+}
+
 export function setTank(key) {
   if (!TANKS[key]) key = 'nano';
   const t = TANKS[key];

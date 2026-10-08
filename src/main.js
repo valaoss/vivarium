@@ -4,7 +4,10 @@ import { Sound } from './audio/Sound.js';
 import { loadRealFish } from './creatures/realModels.js';
 import { loadSnailShell } from './creatures/Snail.js';
 
-Promise.all([loadRealFish(), loadSnailShell()]).then(start);
+let habitat = 'aqua';
+try { habitat = new URLSearchParams(location.search).get('habitat') ?? localStorage.getItem('vivarium.habitat') ?? 'aqua'; } catch { /* yok */ }
+if (habitat === 'terra') import('./terra/main.js').then((m) => m.startTerra());
+else Promise.all([loadRealFish(), loadSnailShell()]).then(start);
 
 function start() {
   const game = new Game(document.getElementById('scene'));

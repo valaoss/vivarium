@@ -29,9 +29,13 @@ const I = {
   pill: '<rect x="3" y="9" width="18" height="7" rx="3.5" transform="rotate(-35 12 12.5)"/><path d="M10 8.5l4 6"/>',
   warn: '<path d="M12 3l10 18H2z"/><path d="M12 10v5M12 18v.5"/>',
   temp: '<path d="M14 14.8V4a2 2 0 0 0-4 0v10.8a4 4 0 1 0 4 0z"/>',
+  terra: '<path d="M4 20h16"/><path d="M5 20V9l7-5 7 5v11"/><path d="M9 20c0-3 1.5-5 3-6 1.5 1 3 3 3 6"/>',
+  fish: '<path d="M3 12c3-4 8-5 12-3l4-3v12l-4-3c-4 2-9 1-12-3z"/><circle cx="8" cy="11" r="0.8"/>',
+  mist: '<path d="M7 4h6v4H7z"/><path d="M13 6h3"/><path d="M18 4.5l2-1M18 6h3M18 7.5l2 1"/><path d="M9 8v3c0 1-2 2-2 4v5h6v-5c0-2-2-3-2-4V8"/>',
+  drop: '<path d="M12 3s6 6.5 6 11a6 6 0 0 1-12 0c0-4.5 6-11 6-11z"/>',
 };
-const icon = (n, cls = '') => `<svg class="ic ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${I[n]}</svg>`;
-const h = (html) => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; };
+export const icon = (n, cls = '') => `<svg class="ic ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${I[n]}</svg>`;
+export const h = (html) => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; };
 
 export function createHUD(game, root, sound) {
   root.innerHTML = '';
@@ -90,7 +94,13 @@ export function createHUD(game, root, sound) {
       <button data-act="shop">${icon('shop')}<span>Dükkân</span></button>
       <button data-act="photo">${icon('camera')}<span>Fotoğraf</span></button>
       <button data-act="sound">${icon('sound')}<span>Ses</span></button>
+      <button data-act="terra">${icon('terra')}<span>Teraryum</span></button>
     </div>`);
+  right.querySelector('[data-act="terra"]').addEventListener('click', () => {
+    game.save();
+    try { localStorage.setItem('vivarium.habitat', 'terra'); } catch { /* yok */ }
+    location.reload();
+  });
   dock.appendChild(h('<div class="dock-sep"></div>'));
   dock.appendChild(right);
 

@@ -49,6 +49,13 @@ Bitkiler: vallisneria, java eğreltisi, anubias, kriptokorin, Amazon kılıcı, 
 - Nerit kabuğu: "[Black and White Nerite Shell](https://sketchfab.com/3d-models/c3b2ba55a35946608814d0db896cbe58)" — RISD Nature Lab, CC-BY 4.0 (zebra nerit tonuyla)
 - Kök: "[Real Aquarium Wood 3D scan](https://sketchfab.com/3d-models/c53807eff7c4427faacfde6c1b581532)" — zdenkoroman, CC-BY 4.0
 
+Teraryum (Dock → Teraryum): Japon kırmızı karınlı semenderi için yarısı gölet, mantar kabuklu cam teraryum. Semenderin yürüme (çapraz bacak çiftleri, S kıvrımlı gövde), yüzme (bacaklar gövdeye yatık, kuyruk dalgası), yüzeyden hava alma, avına sinsice yaklaşıp atakla yakalama ve yutkunma hareketleri iskelet üzerinde prosedürel üretilir. Sis püskürtme nemi artırır ve ön camı buğulandırır.
+
+- Semender: "[CC0 Japanese Fire-bellied Newt](https://sketchfab.com/3d-models/162a62976ebd4b7180db6723564b72ab)" — ffish.asia / floraZia, CC0
+- Mantar kabuğu: "[Cork bark flat](https://sketchfab.com/3d-models/55783c3b79764ef4b06fd0b99a620220)" ve "[Cork Bark tube](https://sketchfab.com/3d-models/07dec8bbaf1f4a6c88799ea6147ba6c2)" — harenil, CC-BY 4.0
+- Yosun: "[Ground moss fores square 2k](https://sketchfab.com/3d-models/8b5699d30035485c9564035bb4458a91)" — 3dhdscan, CC-BY 4.0
+- Eğrelti `fern_02`, `calathea_orbifolia_01` ve zemin dokusu `forest_leaves_02`: Poly Haven, CC0
+
 Melek balığı: "[Freshwater Angelfish](https://sketchfab.com/3d-models/37475fc6c8904b6bbf7e27617bd851b8)" — Wataru Onuki (monte-hotate), Sketchfab Standard lisansı; yabani gümüş-çizgili desenle boyandı.
 
 CC0 (atıf gerekmez, teşekkürler): ffishAsia & floraZia taramaları (kılıçkuyruk; medaka gövdesi zebra danio, kiraz barbus ve harlequin rasbora desenleriyle; loach gövdesi kuhli deseniyle; karides; sivrisinek balığı gövdesi siyah moli ve plati renkleriyle; cennet balığı gövdesi cüce gurami deseniyle), Poly Haven `rock_07`, `rock_09`, `dead_quiver_branch_01`. Modeller telefon için sadeleştirildi ve dokuları WebP'ye çevrildi.
