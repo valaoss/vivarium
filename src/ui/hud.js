@@ -357,7 +357,9 @@ export function createHUD(game, root, sound) {
       dz.querySelector('span').textContent = d.treating ? `Beyaz benek · tedavi ediliyor (%${Math.round(d.ich * 100)})` : `Beyaz benek hastalığı (%${Math.round(d.ich * 100)})`;
       dz.querySelector('.treat').classList.toggle('hidden', !!d.treating);
     }
-    card.querySelector('.cstate').textContent = st;
+    // boy: gerçek ölçü (cm); gençse büyüdüğü görülür
+    const growing = d.adultSize && d.size < d.adultSize - 0.01;
+    card.querySelector('.cstate').textContent = `${st} · ${c.total.toFixed(1)} cm${growing ? ` · büyüyor (yetişkin ~${(c.total / d.size * d.adultSize).toFixed(1)} cm)` : ''}`;
     card.querySelector('[data-b="food"]').style.width = `${100 - d.hunger}%`;
     card.querySelector('[data-b="health"]').style.width = `${d.health}%`;
     card.querySelector('[data-b="calm"]').style.width = `${100 - d.stress}%`;

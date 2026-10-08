@@ -277,7 +277,9 @@ export class Game {
       health: 100,
       stress: 35,
       age: 0,
-      size: 0.9 + r() * 0.2,
+      // dükkândan gelen hayvanlar genç: yetişkin boyunun ~2/3'ü; her bireyin yetişkin boyu biraz farklı
+      size: 0.62 + r() * 0.08,
+      adultSize: 0.92 + r() * 0.2,
       seed: r() * 100,
       palette: extra.palette ?? Math.floor(r() * 6),
       sex: extra.sex ?? (r() < 0.5 ? 'm' : 'f'),
@@ -356,6 +358,11 @@ export class Game {
     const h = dtMin / 60;
     for (const c of this.creatures) {
       const d = c.data;
+      // Büyüme: tok ve sağlıklıyken yavaş, boy yetişkine yaklaştıkça daha da yavaşlar (birkaç oyun günü)
+      if (d.adultSize && !d.fry && d.size < d.adultSize - 0.002) {
+        const fed = d.hunger < 60 ? 1 : d.hunger < 80 ? 0.35 : 0;
+        d.size = Math.min(d.adultSize, d.size + (d.adultSize - d.size) * 0.0065 * h * fed * (d.health / 100));
+      }
       if (d.fry && d.size < (d.adultSize ?? 1)) {
         d.size = Math.min(d.adultSize ?? 1, d.size + 0.012 * h * (d.hunger < 60 ? 1 : 0.3));
         if (d.size >= (d.adultSize ?? 1) - 0.001) {

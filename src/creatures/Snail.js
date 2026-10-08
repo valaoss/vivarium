@@ -157,6 +157,9 @@ export class Snail {
   }
 
   update(dt, world) {
+    // büyüme: kabuk ve ayak birlikte, çok yavaş
+    const sc = (this.data.size ?? 1) * 0.85;
+    if (Math.abs(sc - this.body.scale.x) > 1e-4) { this.body.scale.setScalar(sc); this.total = 2 * sc; }
     this.t += dt;
     this.timer -= dt;
     const night = world.night > 0.6;

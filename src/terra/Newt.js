@@ -63,7 +63,7 @@ export const NEWT_LABEL = {
 export class Newt {
   constructor(world, data = {}) {
     this.world = world;
-    this.data = { name: 'Beni', hunger: 30, ...data };
+    this.data = { name: 'Beni', hunger: 30, size: 0.8, adultSize: 1, ...data };
     this.root = new THREE.Group();
     this.pitchGroup = new THREE.Group();
     this.root.add(this.pitchGroup);
@@ -207,14 +207,19 @@ export class Newt {
   }
 
   headPos(out) {
-    return out.set(this.pos.x + Math.sin(this.heading) * 4.4, this.pos.y + 0.6, this.pos.z + Math.cos(this.heading) * 4.4);
+    const k = 4.4 * this.data.size;
+    return out.set(this.pos.x + Math.sin(this.heading) * k, this.pos.y + 0.6 * this.data.size, this.pos.z + Math.cos(this.heading) * k);
   }
 
   // ---------------------------------------------------------------- Hareket
   update(dt) {
     dt = Math.min(dt, 0.05);
     const w = this.world;
-    this.data.hunger = Math.min(100, this.data.hunger + dt * 0.02);
+    const d0 = this.data;
+    d0.hunger = Math.min(100, d0.hunger + dt * 0.02);
+    // çok yavaş büyüme (1 sn = 1 oyun dakikası): tokken birkaç oyun haftasında yetişkin boyuna ulaşır
+    if (d0.size < d0.adultSize && d0.hunger < 60) d0.size = Math.min(d0.adultSize, d0.size + (d0.adultSize - d0.size) * 0.004 * dt / 60);
+    this.root.scale.setScalar(d0.size);
     this.think(dt);
 
     const depth = w.depthAt(this.pos.x, this.pos.z);
@@ -285,7 +290,9 @@ export class Newt {
     const x0 = -w.w / 2 + 0.7, x1 = w.w / 2 - 0.7, z0 = -w.d / 2 + 0.9, z1 = w.d / 2 - 0.7;
     for (let it = 0; it < 3; it++) {
       let px = 0, pz = 0;
-      for (const [f, l, rad] of BODY) {
+      const k = this.data.size;
+      for (const [f0, l0, rad0] of BODY) {
+        const f = f0 * k, l = l0 * k, rad = rad0 * k;
         const x = this.pos.x + fx * f - fz * l, z = this.pos.z + fz * f + fx * l;
         px += Math.max(0, x0 + rad - x) - Math.max(0, x - (x1 - rad));
         pz += Math.max(0, z0 + rad - z) - Math.max(0, z - (z1 - rad));

@@ -162,10 +162,7 @@ export class Shrimp {
     const s = shared();
     const m = materialsFor(this.sp);
     this.group = new THREE.Group();
-    const scale = (data.size ?? 1) * (this.sp.size ?? 1) * 0.95;
-    this.group.scale.setScalar(scale);
-    this.total = 2.7 * scale;
-    this.stand = STAND * scale;
+    this.applySize();
     const mesh = (g, mat, parent) => { const o = new THREE.Mesh(g, mat); o.castShadow = true; parent.add(o); return o; };
 
     // gövde: kabuk + karın halkaları zinciri (her halka kendi ekleminde döner)
@@ -272,6 +269,7 @@ export class Shrimp {
   get radius() { return this.total * 0.6; }
 
   update(dt, world) {
+    this.applySize();
     this.t += dt;
     this.timer -= dt;
     const d = this.data;
@@ -411,6 +409,16 @@ export class Shrimp {
       if (dd < bd) { bd = dd; best = f; }
     }
     return best;
+  }
+
+  // büyüdükçe ölçek (çok yavaş değişir)
+  applySize() {
+    const scale = (this.data.size ?? 1) * (this.sp.size ?? 1) * 0.95;
+    if (this._sc !== undefined && Math.abs(scale - this._sc) < 1e-4) return;
+    this._sc = scale;
+    this.group.scale.setScalar(scale);
+    this.total = 2.7 * scale;
+    this.stand = STAND * scale;
   }
 
   scare(from) {

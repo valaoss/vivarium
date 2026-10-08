@@ -89,7 +89,8 @@ export function createTerraHUD(terra, root) {
       if (selected) {
         const n = selected;
         card.querySelector('.cname').textContent = n.data.name;
-        card.querySelector('.cstate').textContent = NEWT_LABEL[n.state] ?? '';
+        const cm = 11 * n.data.size;
+        card.querySelector('.cstate').textContent = `${NEWT_LABEL[n.state] ?? ''} · ${cm.toFixed(1)} cm${n.data.size < n.data.adultSize - 0.01 ? ' · büyüyor' : ''}`;
         card.querySelector('[data-b="food"]').style.width = `${100 - n.data.hunger}%`;
       }
     },
