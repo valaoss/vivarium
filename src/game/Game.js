@@ -107,7 +107,7 @@ export class Game {
 
     this.load();
     this.bindInput();
-    this.fitTank();
+    this.resize();
     window.addEventListener('resize', () => this.resize());
     document.addEventListener('visibilitychange', () => { if (document.hidden) this.save(); });
     window.addEventListener('beforeunload', () => this.save());
@@ -1059,6 +1059,8 @@ export class Game {
   resize() {
     const w = window.innerWidth, h = window.innerHeight;
     this.camera.aspect = w / h;
+    // dik telefon ekranında tank enine sığsın diye görüş açısı biraz genişler (kamera odanın dışına çıkmaz)
+    this.camera.fov = w / h < 0.8 ? 54 : 38;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h);
     this.fx.setSize(w, h);

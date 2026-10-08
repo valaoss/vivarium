@@ -216,35 +216,48 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .wbox .primary { width: auto; min-width: 180px; padding: 13px 34px; font-size: 15px; border-radius: 999px; }
 
 /* ---------- Telefon ---------- */
-@media (max-width: 760px) {
-  :root { --gap: 10px; }
-  .topbar { left: var(--gap); right: var(--gap); top: calc(var(--gap) + env(safe-area-inset-top)); transform: none; justify-content: space-between; gap: 6px; padding: 9px 14px; font-size: 12px; }
-  .topbar .sep, .clock .day, .temp, .lvl .bar { display: none; }
-  .bar { width: 32px; }
-  .quest { left: var(--gap); right: var(--gap); width: auto; top: calc(62px + env(safe-area-inset-top)); padding: 11px 14px; border-radius: 18px; }
-  .qtitle { font-size: 14.5px; margin: 4px 0 2px; }
-  .qdesc { font-size: 12px; }
-  .qprog { margin-top: 8px; }
-  .dock { left: var(--gap); right: var(--gap); transform: none; justify-content: space-between; padding: 5px; border-radius: 24px; }
-  .tools, .right-tools { justify-content: space-around; }
-  .tools { flex: 6; }
-  .right-tools { flex: 3; }
-  .dock-sep { margin: 12px 1px; }
-  .tools button, .right-tools button { width: auto; flex: 1; min-width: 0; padding: 0; height: 52px; border-radius: 17px; }
+/* Telefon: arayüz küçük kenar çiplerine toplanır, tank görünür kalır */
+@media (max-width: 760px), (max-height: 520px) {
+  :root { --gap: 8px; }
+  .topbar { left: var(--gap); right: auto; top: calc(var(--gap) + env(safe-area-inset-top)); transform: none; gap: 8px; padding: 5px 10px; font-size: 11px; }
+  .topbar .ic { width: 14px; height: 14px; }
+  .topbar .sep, .clock .day, .temp, .lvl .bar, .clock .lt { display: none; }
+  .bar { width: 22px; }
+  .quest { left: auto; right: var(--gap); width: auto; max-width: 46vw; top: calc(var(--gap) + env(safe-area-inset-top)); padding: 6px 10px; border-radius: 14px; font-size: 11px; cursor: pointer; }
+  .quest .qhead { display: none; }
+  .qtitle { font-size: 11.5px; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .quest:not(.open) .qdesc, .quest:not(.open) .qprog { display: none; }
+  .quest.open { max-width: calc(100vw - 2 * var(--gap)); }
+  .quest.open .qtitle { white-space: normal; }
+  .qdesc { font-size: 11px; margin-top: 2px; }
+  .qprog { margin-top: 6px; }
+  .dock { left: 50%; right: auto; transform: translateX(-50%); padding: 3px; border-radius: 18px; gap: 0; bottom: calc(var(--gap) + env(safe-area-inset-bottom)); }
   .tools, .right-tools { gap: 0; }
+  .dock-sep { margin: 8px 2px; }
+  .tools button, .right-tools button { min-width: 0; width: 36px; height: 38px; padding: 0; border-radius: 13px; }
+  .tools button .ic, .right-tools button .ic { width: 18px; height: 18px; }
   .tools button span, .right-tools button span { display: none; }
-  .tools button[data-act].on::after { top: 8px; right: 8px; }
-  .speed { right: var(--gap); bottom: calc(80px + env(safe-area-inset-bottom)); }
-  .speed button { padding: 7px 12px; }
-  .pop, .shop, .card { left: var(--gap); right: var(--gap); width: auto; transform: none; bottom: calc(80px + env(safe-area-inset-bottom)); top: auto; animation-name: rise-r; }
-  .shop { max-height: 58vh; }
-  .card { padding: 16px; }
-  .mode-hint { bottom: calc(132px + env(safe-area-inset-bottom)); white-space: normal; width: calc(100vw - 40px); text-align: center; border-radius: 16px; }
-  .toasts { top: calc(140px + env(safe-area-inset-top)); }
-  .wbox { margin: 0 16px; padding: 30px 24px 26px; }
-  .wlogo { font-size: 26px; }
+  .tools button[data-act].on::after { top: 6px; right: 6px; width: 5px; height: 5px; }
+  .speed { right: var(--gap); bottom: calc(var(--gap) + 48px + env(safe-area-inset-bottom)); padding: 2px; }
+  .speed button { padding: 4px 8px; font-size: 10.5px; }
+  .pop, .shop, .card { left: var(--gap); right: var(--gap); width: auto; transform: none; bottom: calc(52px + env(safe-area-inset-bottom)); top: auto; animation-name: rise-r; }
+  .shop { max-height: 52vh; }
+  .card { padding: 11px 12px; font-size: 12px; max-height: 46vh; overflow-y: auto; }
+  .card .cname { font-size: 15px; }
+  .card .ctrait { font-size: 11.5px; }
+  .item { padding: 7px; gap: 9px; border-radius: 14px; }
+  .mode-hint { bottom: calc(96px + env(safe-area-inset-bottom)); white-space: normal; max-width: calc(100vw - 32px); width: auto; text-align: center; border-radius: 14px; font-size: 11.5px; padding: 6px 12px; }
+  .wc-chip { bottom: calc(var(--gap) + 48px + env(safe-area-inset-bottom)); padding: 5px 5px 5px 12px; gap: 8px; font-size: 11.5px; }
+  .wc-bar { width: 48px; }
+  .toasts { top: calc(44px + env(safe-area-inset-top)); }
+  .toast { font-size: 11.5px; padding: 8px 12px; }
+  .wbox { margin: 0 16px; padding: 24px 20px 22px; }
+  .wlogo { font-size: 24px; }
 }
 
+@media (max-width: 480px) {
+  .quest { top: calc(var(--gap) + 34px + env(safe-area-inset-top)); max-width: 60vw; }
+}
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
 }

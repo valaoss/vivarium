@@ -58,6 +58,7 @@ export function createHUD(game, root, sound) {
   // ---- Görev kartı ----
   const quest = h(`<div class="quest glass"><div class="qhead"><span class="qtag">Görev <b></b></span><span class="qreward"></span></div><div class="qtitle"></div><div class="qdesc"></div><div class="qprog"><i></i></div></div>`);
   root.appendChild(quest);
+  quest.addEventListener('click', () => quest.classList.toggle('open'));
 
   // ---- Araç çubuğu (sol alt) ----
   const tools = h(`

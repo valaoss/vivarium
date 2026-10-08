@@ -468,11 +468,12 @@ export class Terrarium {
   resize() {
     const w = window.innerWidth, h = window.innerHeight;
     this.camera.aspect = w / h;
+    this.camera.fov = w / h < 0.8 ? 54 : 38;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h);
     const vfov = THREE.MathUtils.degToRad(this.camera.fov);
     const hfov = 2 * Math.atan(Math.tan(vfov / 2) * this.camera.aspect);
-    const need = Math.max(112, (W / 2 + 8) / Math.tan(hfov / 2));
+    const need = Math.max(112, (W / 2 + 15) / Math.tan(hfov / 2));   // ön köşeler kameraya daha yakın: pay bırak
     const dir = this.camera.position.clone().sub(this.controls.target);
     if (dir.length() < need) { dir.setLength(need); this.camera.position.copy(this.controls.target).add(dir); }
   }
