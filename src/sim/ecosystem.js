@@ -1,3 +1,4 @@
+import { TANK } from '../config.js';
 import { SPECIES } from '../creatures/species.js';
 import { PLANT_TYPES } from '../world/plants.js';
 
@@ -26,6 +27,7 @@ export function tick(state, dtMin, ctx) {
 
   let bioload = 0;
   for (const c of ctx.creatures) bioload += SPECIES[c.species].bioload;
+  bioload /= TANK.vol;
   let plantMass = 0, plantUptake = 0, plantO2 = 0;
   for (const p of ctx.plants) {
     const m = p.growth * p.health;

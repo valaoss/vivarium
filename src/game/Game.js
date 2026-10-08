@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { MOBILE, TANK, HALF_W, HALF_D, LIGHT_ON_HOUR, LIGHT_OFF_HOUR, OFFLINE_CAP_MIN, GAME_MIN_PER_SEC } from '../config.js';
+import { MOBILE, TANK, TANKS, HALF_W, HALF_D, LIGHT_ON_HOUR, LIGHT_OFF_HOUR, OFFLINE_CAP_MIN, GAME_MIN_PER_SEC } from '../config.js';
 import { createRenderer, createCamera, createControls, createRoom } from '../render/scene.js';
 import { WU, createWaterVolume, createWaterSurface, createMeniscus, createGodRays } from '../render/water.js';
 import { createTank, ALGAE_GRID } from '../render/glass.js';
@@ -244,7 +244,7 @@ export class Game {
       seed: r() * 100,
       palette: extra.palette ?? Math.floor(r() * 6),
       sex: extra.sex ?? (r() < 0.5 ? 'm' : 'f'),
-      pos: extra.pos ?? [(r() - 0.5) * 30, TANK.water - 3, (r() - 0.5) * 12],
+      pos: extra.pos ?? [(r() - 0.5) * TANK.w * 0.5, TANK.water - 3, (r() - 0.5) * TANK.d * 0.4],
     };
     return this.addCreature(data);
   }
@@ -328,14 +328,14 @@ export class Game {
         }
       }
     }
-    if (this.creatures.length >= 30) return;
+    if (this.creatures.length >= TANK.cap) return;
     for (const mother of [...this.creatures]) {
       const sp = mother.sp, d = mother.data;
       if (!sp.livebearer || d.sex !== 'f' || d.fry || d.health < 70 || d.hunger > 65) continue;
       const hasMale = this.creatures.some((o) => o.species === mother.species && o.data.sex === 'm' && !o.data.fry);
       if (!hasMale || Math.random() > 0.022 * h) continue;
       const n = 2 + Math.floor(Math.random() * 3);
-      for (let i = 0; i < n && this.creatures.length < 30; i++) {
+      for (let i = 0; i < n && this.creatures.length < TANK.cap; i++) {
         const fry = this.spawn(mother.species, {
           palette: Math.random() < 0.5 ? d.palette : Math.floor(Math.random() * 6),
           pos: [mother.pos.x + (Math.random() - 0.5) * 2, mother.pos.y, mother.pos.z + (Math.random() - 0.5) * 2],
@@ -611,13 +611,39 @@ export class Game {
     if (this.state.coins < item.price) { this.toast('Yeterli bakım paran yok.', 'warn'); return false; }
     if (kind === 'creature') {
       if (!this.isUnlocked(key)) return false;
-      if (this.creatures.length >= 30) { this.toast('Bu tank için canlı sayısı sınırına ulaştın.', 'warn'); return false; }
+      if (this.creatures.length >= TANK.cap) { this.toast('Bu tank için canlı sayısı sınırına ulaştın.', 'warn'); return false; }
       this.state.coins -= item.price;
       const c = this.spawn(key);
       this.toast(`${c.data.name} (${item.name}) tanka eklendi.`, 'good');
       return true;
     }
     this.setMode('plant:' + key);
+    return true;
+  }
+
+  upgradeTank(key) {
+    const t = TANKS[key];
+    if (!t || key === TANK.key) return false;
+    if (this.level < (t.level ?? 1)) { this.toast(`${t.name} Doğa Seviyesi ${t.level} ile açılır.`, 'warn'); return false; }
+    if (this.state.coins < t.price) { this.toast('Yeterli bakım paran yok.', 'warn'); return false; }
+    this.state.coins -= t.price;
+    // Bitki ve canlıları yeni tankın oranlarına taşı; dekor da aynı oranla yayılır
+    const kx = t.w / TANK.w, kz = t.d / TANK.d, ky = t.water / TANK.water;
+    const s = this.serialize();
+    for (const p of s.plants) {
+      const onSand = Math.abs(p.y - (sandHeight(p.x, p.z) - 0.3)) < 0.05;
+      p.x *= kx; p.z *= kz;
+      p.y = onSand ? null : p.y * ky;
+    }
+    for (const c of s.creatures) if (c.pos) c.pos = [c.pos[0] * kx, c.pos[1] * ky, c.pos[2] * kz];
+    s.tank = key;
+    s.algae = new Array(this.algaeGrid.length).fill(0);
+    s.water.waste *= TANK.vol / ((t.w * t.d * t.water) / (60 * 30 * 33));
+    s.counters.tankUpgrades = (s.counters.tankUpgrades ?? 0) + 1;
+    try { localStorage.setItem(SAVE_KEY, JSON.stringify(s)); } catch { return false; }
+    this.save = () => {};
+    this.emit('tankmove', t);
+    setTimeout(() => location.reload(), 900);
     return true;
   }
 
@@ -797,8 +823,8 @@ export class Game {
     const aspect = this.camera.aspect;
     const vfov = THREE.MathUtils.degToRad(this.camera.fov);
     const hfov = 2 * Math.atan(Math.tan(vfov / 2) * aspect);
-    const need = Math.max(108, (TANK.w / 2 + 8) / Math.tan(hfov / 2));
-    this.controls.maxDistance = Math.min(200, Math.max(170, need * 1.4));
+    const need = Math.max(108 * TANK.sx ** 0.3, (TANK.w / 2 + 8) / Math.tan(hfov / 2), (TANK.h * 0.6 + 4) / Math.tan(vfov / 2));
+    this.controls.maxDistance = Math.min(215, Math.max(170, need * 1.4));
     if (this.photo) return;
     const dir = this.camera.position.clone().sub(this.controls.target);
     if (dir.length() < need * 0.98 || aspect < 1) dir.setLength(need);
@@ -910,7 +936,7 @@ export class Game {
     if (this.follow && this.selected) {
       this.controls.target.lerp(this.selected.pos, 0.06);
     } else if (!this.photo) {
-      this.controls.target.lerp(new THREE.Vector3(0, 15, 0), 0.02);
+      this.controls.target.lerp(new THREE.Vector3(0, TANK.h * 0.42, 0), 0.02);
     }
     if (this.photo) {
       const center = this.selected ? this.selected.pos : this.controls.target;

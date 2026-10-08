@@ -9,10 +9,10 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 // Kum yüksekliği: arkaya doğru yükselen klasik akvaskep eğimi + yumuşak tepecikler
 export function sandHeight(x, z) {
   const back = (HALF_D - z) / TANK.d;            // 0 ön .. 1 arka
-  let h = 2.2 + back * back * 4.8;
+  let h = 2.2 + back * back * 4.8 * TANK.sy;
   h += fbm3(x * 0.06, z * 0.06, 2.0, 3) * 1.1;
   // sağ arkada hafif tepe (taş grubu için)
-  h += Math.exp(-((x - 12) ** 2 + (z + 6) ** 2) / 120) * 1.6;
+  h += Math.exp(-((x - 12 * TANK.sx) ** 2 + (z + 6 * TANK.sz) ** 2) / (120 * TANK.sx)) * 1.6;
   return Math.max(1.2, h);
 }
 
@@ -21,7 +21,7 @@ export function createSubstrate(scene) {
   const sandSet = pbrSet('sand_02', [4, 2]);
 
   // Kum: ızgara + yükseklik + ön kesit (camdan görünen katman)
-  const segX = 120, segZ = 60;
+  const segX = Math.round(120 * TANK.sx), segZ = Math.round(60 * TANK.sz);
   const geo = new THREE.PlaneGeometry(TANK.w - 0.1, TANK.d - 0.1, segX, segZ);
   geo.rotateX(-Math.PI / 2);
   const pos = geo.attributes.position;
@@ -91,7 +91,7 @@ export function createSubstrate(scene) {
   }
   const pebbleSet = pbrSet('dark_rock');
   const pebbleMat = patchUnderwater(new THREE.MeshStandardMaterial({ roughness: 0.8, metalness: 0, color: new THREE.Color(3.4, 3.25, 3.0) }), { key: 'pebble', extra: triplanarHook(pebbleSet, 0.5) });
-  const N = 160;
+  const N = Math.round(160 * TANK.sx * TANK.sz);
   const pebbles = new THREE.InstancedMesh(pebbleGeo, pebbleMat, N);
   const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p3 = new THREE.Vector3();
   const col = new THREE.Color();
@@ -133,8 +133,19 @@ function createRocks(group) {
     { x: 7, z: -1, sx: 3.2, sy: 3, sz: 3, ry: 1.2, seed: 3 },
     { x: -20, z: 3, sx: 3.6, sy: 2.6, sz: 3, ry: 0.2, seed: 4 },
   ];
+  // Büyük tanklarda boşluğu dolduran ek taşlar
+  if (TANK.sx > 1) defs.push(
+    { x: 15.5, z: 4, sx: 2.4, sy: 2, sz: 2.2, ry: 2.1, seed: 5 },
+    { x: -1, z: -9, sx: 3.4, sy: 4.2, sz: 2.8, ry: -1.1, seed: 6 },
+  );
+  if (TANK.sx > 1.6) defs.push(
+    { x: -6, z: 7, sx: 1.8, sy: 1.4, sz: 1.6, ry: 0.7, seed: 7 },
+    { x: 24, z: -7.5, sx: 3, sy: 3.6, sz: 2.6, ry: 0.9, seed: 8 },
+  );
   const obstacles = [];
-  for (const d of defs) {
+  const k = Math.sqrt(TANK.sx);
+  for (const d0 of defs) {
+    const d = { ...d0, x: d0.x * TANK.sx, z: d0.z * TANK.sz, sx: d0.sx * k, sy: d0.sy * k, sz: d0.sz * k };
     const geo = smoothIco(1, 6);
     const p = geo.attributes.position;
     const colors = new Float32Array(p.count * 3);
@@ -221,10 +232,10 @@ function createDriftwood(group) {
     [[-22, 3, -9], [-27, 4.5, -4], [-28.5, 8, 0]],
     [[-4, 18, -11], [-1, 24, -9], [4, 27, -10]],
   ];
-  const radii = [1.5, 0.75, 0.6, 0.85, 0.5];
+  const radii = [1.5, 0.75, 0.6, 0.85, 0.5].map((r) => r * (1 + (TANK.sx - 1) * 0.5));
   const obstacles = [];
   branches.forEach((pts, bi) => {
-    const curve = new THREE.CatmullRomCurve3(pts.map((p) => new THREE.Vector3(...p)));
+    const curve = new THREE.CatmullRomCurve3(pts.map((p) => new THREE.Vector3(p[0] * TANK.sx, p[1] * TANK.sy, p[2] * TANK.sz)));
     const tubular = 80, radial = 14;
     const geo = new THREE.TubeGeometry(curve, tubular, radii[bi], radial, false);
     const p = geo.attributes.position;
@@ -286,13 +297,13 @@ function createEquipment(group) {
   nozzle.rotation.x = Math.PI / 2;
   nozzle.position.set(0, 20.5, 3);
   filter.add(nozzle);
-  filter.position.set(-HALF_W + 3.5, 6, -HALF_D + 2.2);
+  filter.position.set(-HALF_W + 3.5, 6 + TANK.water - 33, -HALF_D + 2.2);
   filter.traverse((o) => { o.castShadow = true; });
   group.add(filter);
 
   // Hava taşı + hortum (sağ arka)
   const stoneMat = patchUnderwater(new THREE.MeshStandardMaterial({ color: 0x6b6f75, roughness: 1 }), { key: 'airstone' });
-  const ax = 22, az = -10;
+  const ax = 22 * TANK.sx, az = -10 * TANK.sz;
   const stone = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.1, 2.4, 16), stoneMat);
   stone.rotation.z = Math.PI / 2;
   stone.position.set(ax, sandHeight(ax, az) + 0.8, az);
@@ -321,17 +332,17 @@ function createEquipment(group) {
   const led = new THREE.Mesh(new THREE.SphereGeometry(0.25, 8, 8), new THREE.MeshBasicMaterial({ color: 0xff3a1a }));
   led.position.set(0, 11, 1.1);
   heater.add(led);
-  heater.position.set(-HALF_W + 1.6, 19, 4);
+  heater.position.set(-HALF_W + 1.6, 19 * TANK.sy, 4 * TANK.sz);
   heater.rotation.z = 0.12;
   group.add(heater);
 
   return {
     airstone: new THREE.Vector3(ax, stone.position.y + 1, az),
-    filterOut: new THREE.Vector3(filter.position.x, 26.5, filter.position.z + 3.5),
+    filterOut: new THREE.Vector3(filter.position.x, filter.position.y + 20.5, filter.position.z + 3.5),
     heaterLed: led,
     obstacles: [
-      { pos: new THREE.Vector3(filter.position.x, 15, filter.position.z), r: 5 },
-      { pos: new THREE.Vector3(heater.position.x, 19, heater.position.z), r: 2.5 },
+      { pos: new THREE.Vector3(filter.position.x, filter.position.y + 9, filter.position.z), r: 5 },
+      { pos: heater.position.clone(), r: 2.5 },
     ],
   };
 }

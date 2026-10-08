@@ -18,13 +18,13 @@ export function createRenderer(canvas) {
 
 export function createCamera() {
   const camera = new THREE.PerspectiveCamera(38, window.innerWidth / window.innerHeight, 1, 1200);
-  camera.position.set(6, 22, 108);
+  camera.position.set(6, TANK.h * 0.61, 108 * TANK.sx ** 0.3);
   return camera;
 }
 
 export function createControls(camera, dom) {
   const c = new OrbitControls(camera, dom);
-  c.target.set(0, 15, 0);
+  c.target.set(0, TANK.h * 0.42, 0);
   c.enableDamping = true;
   c.dampingFactor = 0.07;
   c.enablePan = false;

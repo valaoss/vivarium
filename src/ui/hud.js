@@ -6,6 +6,7 @@ import { SNAIL_LABEL } from '../creatures/Snail.js';
 import { QUESTS, currentQuest } from '../game/quests.js';
 import { quality } from '../sim/ecosystem.js';
 import { REAL_FISH, realModelKey } from '../creatures/realModels.js';
+import { TANK, TANKS } from '../config.js';
 
 const I = {
   eye: '<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
@@ -95,7 +96,7 @@ export function createHUD(game, root, sound) {
 
   const shop = h(`
     <div class="shop glass hidden">
-      <div class="shophead"><div class="tabs"><button data-tab="creature" class="on">Canlılar</button><button data-tab="plant">Bitkiler</button></div><button class="x">${icon('close')}</button></div>
+      <div class="shophead"><div class="tabs"><button data-tab="creature" class="on">Canlılar</button><button data-tab="plant">Bitkiler</button><button data-tab="tank">Tank</button></div><button class="x">${icon('close')}</button></div>
       <div class="items"></div>
     </div>`);
   root.appendChild(shop);
@@ -168,6 +169,7 @@ export function createHUD(game, root, sound) {
     shop.querySelectorAll('[data-tab]').forEach((t) => t.classList.toggle('on', t.dataset.tab === shopTab));
     const items = shop.querySelector('.items');
     items.innerHTML = '';
+    if (shopTab === 'tank') { renderTanks(items); return; }
     const list = shopTab === 'creature' ? Object.entries(SPECIES) : Object.entries(PLANT_TYPES);
     for (const [key, it] of list) {
       const locked = shopTab === 'creature' && !game.isUnlocked(key);
@@ -201,6 +203,36 @@ export function createHUD(game, root, sound) {
       items.appendChild(el);
     }
   };
+  const renderTanks = (items) => {
+    const keys = Object.keys(TANKS);
+    const cur = keys.indexOf(TANK.key);
+    keys.forEach((key, i) => {
+      const t = TANKS[key];
+      const locked = game.level < (t.level ?? 1);
+      const state = i < cur ? 'Geride kaldı' : i === cur ? 'Şu anki tankın' : '';
+      const el = h(`
+        <div class="item ${locked || i < cur ? 'locked' : ''}">
+          <div class="swatch sw-tank" style="--k:${0.55 + i * 0.22}"></div>
+          <div class="info">
+            <div class="iname">${t.name} <i>${t.liters} L</i></div>
+            <div class="idesc">${locked && i > cur ? `${icon('lock', 'sm')} Doğa Seviyesi ${t.level} ile açılır.` : t.desc}</div>
+            ${i > cur ? `<div class="idesc">${t.cap} canlıya kadar · atık ${(t.liters / TANKS[TANK.key].liters).toFixed(1)}× seyrelir</div>` : ''}
+          </div>
+          ${state ? `<span class="istate">${state}</span>` : `<button class="buy" ${locked ? 'disabled' : ''}>${icon('coin', 'sm')}${t.price}</button>`}
+        </div>`);
+      el.querySelector('.buy')?.addEventListener('click', (ev) => {
+        const btn = ev.currentTarget;
+        if (!btn.dataset.ok) { btn.dataset.ok = '1'; btn.innerHTML = 'Taşı'; btn.classList.add('confirm'); return; }
+        if (game.upgradeTank(key)) shop.classList.add('hidden');
+      });
+      items.appendChild(el);
+    });
+  };
+  game.on('tankmove', (t) => {
+    const veil = h(`<div class="tankveil"><div>${t.name} hazırlanıyor…<small>Canlılar yeni tanka taşınıyor</small></div></div>`);
+    root.appendChild(veil);
+    requestAnimationFrame(() => veil.classList.add('on'));
+  });
   shop.querySelectorAll('[data-tab]').forEach((t) => t.addEventListener('click', () => { shopTab = t.dataset.tab; renderShop(); }));
   shop.querySelector('.x').addEventListener('click', () => shop.classList.add('hidden'));
   right.querySelector('[data-act="shop"]').addEventListener('click', () => {

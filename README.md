@@ -18,6 +18,7 @@ Ardından terminalde yazan adresi (varsayılan `http://localhost:5173`) aç.
 - **Yem**: su yüzeyine dokunarak pul yem bırak
 - **Cam sil**: ön camdaki yosunu sürükleyerek temizle
 - **Su değişimi**: %10–50 kısmi değişim (%30 üstü stres yaratır)
+- **Tank büyütme**: Dükkân → Tank sekmesi; Nano 60 L → Orta 150 L (Sv 4) → Büyük 250 L (Sv 6). Büyük tankta atık seyrelir, canlı sınırı artar; bitkiler ve canlılar yeni tanka taşınır
 - **Hava / Işık**: hava taşı ve lamba (lamba 08:00–21:00 otomatik)
 - **1× / 4× / 16×**: zaman hızı (1 sn = 1 oyun dakikası)
 - **Ses**: aç/kapa (tercih hatırlanır)
