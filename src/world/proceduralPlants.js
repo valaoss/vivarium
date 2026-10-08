@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { patchUnderwater } from '../render/water.js';
+import { patchUnderwater, plantWaterMotion } from '../render/water.js';
 import { mulberry } from '../render/textures.js';
+import { foliageShader } from '../render/materials.js';
 
 // Prosedürel bitkiler (yerel birim: cm). Her köşe aSway taşır: x = salınım ağırlığı, y = yükseklik oranı (renk/sağlık için)
 function tag(geo, sway, h, color) {
@@ -20,6 +21,8 @@ function tag(geo, sway, h, color) {
 
 function procShader(mode) {
   return (shader) => {
+    foliageShader(shader);
+    plantWaterMotion(shader, mode === 'float' ? '1.0' : 'aSway.x * aSway.x', mode === 'float');
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>
         uniform float uTime;
@@ -60,9 +63,7 @@ function procShader(mode) {
           diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.55, 0.48, 0.16), sick * (0.6 + spots * 0.4));
           float alg = smoothstep(0.35, 0.8, pnb(vWPos.xz * 1.7 + vWPos.y) * 0.6 + pnb(vWPos.xy * 9.0) * 0.5) * uAlgae * (1.0 - vH * 0.5);
           diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.2, 0.24, 0.08), alg * 0.75);
-        }`)
-      .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
-        totalEmissiveRadiance += diffuseColor.rgb * vec3(0.2, 0.45, 0.12) * uLamp * ${mode === 'float' ? '0.04' : '0.12'};`);
+        }`);
   };
 }
 

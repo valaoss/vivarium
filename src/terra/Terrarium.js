@@ -2,11 +2,14 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { TANK, setEnclosure, MOBILE, LIGHT_ON_HOUR, LIGHT_OFF_HOUR } from '../config.js';
 import { createRenderer, createCamera, createControls, createRoom } from '../render/scene.js';
-import { pbrSet } from '../render/assets.js';
 import { fbm3, mulberry } from '../render/textures.js';
 import { Newt, loadNewt } from './Newt.js';
 import { Ecosystem } from '../eco/Ecosystem.js';
 import { bakeHeightfield } from './heightfield.js';
+import { loadSubstrate, makeRelief, substrateMaterial, contactAO } from './substrate.js';
+import { createPostFX } from '../render/postfx.js';
+import { physicalMaterial, foliageShader } from '../render/materials.js';
+import { PlanarReflection } from '../render/reflection.js';
 
 // Exo Terra tarzı 60 × 45 × 45 cm cam teraryum; içinde yarı karasal semender için gölet
 const W = 60, D = 45, H = 45;
@@ -16,7 +19,13 @@ const loader = new GLTFLoader();
 const MB = `${import.meta.env.BASE_URL}models/terra/`;
 
 // Zemin: arkaya ve sağa doğru yükselen kara, ön solda gölet çanağı
+let relief = null;
 export function groundHeight(x, z) {
+  const h = baseHeight(x, z);
+  return relief ? h + relief(x, z, h) : h;
+}
+
+function baseHeight(x, z) {
   const back = (D / 2 - z) / D;
   let h = 7 + back * 6 + fbm3(x * 0.07, z * 0.07, 1.3, 3) * 1.4;
   const pond = Math.exp(-(((x + 11) / 16) ** 2 + ((z - 11) / 12) ** 2));
@@ -36,6 +45,7 @@ export class Terrarium {
     this.camera.position.set(8, 30, 118);
     this.controls.maxPolarAngle = 1.65;
     this.room = createRoom(this.scene, this.renderer);
+    this.fx = createPostFX(this.renderer, this.scene, this.camera);
     this.time = 0;
     this.listeners = {};
     this.food = [];
@@ -47,6 +57,7 @@ export class Terrarium {
     this.speedMul = 1;
 
     this.buildEnclosure();
+    this.substrate = loadSubstrate(this.renderer);
     this.buildGround();
     this.buildWater();
     this.buildMistParticles();
@@ -84,13 +95,19 @@ export class Terrarium {
   buildEnclosure() {
     const g = TANK.glass;
     const glass = new THREE.MeshPhysicalMaterial({
-      color: 0xffffff, roughness: 0.04, transmission: 0, transparent: true, opacity: 0.1, side: THREE.DoubleSide,
+      color: 0xffffff, roughness: 0.025, transmission: 0, transparent: true, opacity: 0.18, side: THREE.DoubleSide,
       clearcoat: 1, depthWrite: false, envMapIntensity: 1.4,
     });
+    glass.onBeforeCompile = (sh) => {
+      sh.fragmentShader = sh.fragmentShader.replace('#include <color_fragment>', `#include <color_fragment>
+        float glassFresnel = pow(1.0 - abs(dot(normalize(vNormal), normalize(vViewPosition))), 5.0);
+        diffuseColor.a *= 0.08 + 0.92 * glassFresnel;`);
+    };
     // ön cam: buğu ve damlalar için ayrı malzeme
     this.fog = { value: 0 };
     const front = glass.clone();
     front.onBeforeCompile = (sh) => {
+      glass.onBeforeCompile(sh);
       sh.uniforms.uFog = this.fog;
       sh.uniforms.uTime = { get value() { return performance.now() / 1000; } };
       sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec2 vGUv;').replace('#include <uv_vertex>', '#include <uv_vertex>\nvGUv = uv;');
@@ -108,7 +125,7 @@ export class Terrarium {
             f.y += fall * 2.0 - 1.0 * step(0.93, rnd);
             float drop = smoothstep(0.22 * rnd + 0.05, 0.0, length(f * vec2(1.0, 0.8))) * step(0.35, rnd);
             float haze = uFog * (0.35 + 0.65 * smoothstep(0.2, 1.0, vGUv.y));
-            diffuseColor.a = clamp(diffuseColor.a + haze * 0.35 + drop * uFog * 0.55, 0.0, 0.85);
+            diffuseColor.a = clamp(diffuseColor.a + haze * 0.12 + drop * uFog * 0.45, 0.0, 0.7);
             diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.9, 0.95, 1.0), haze * 0.6);
           }`);
     };
@@ -149,100 +166,160 @@ export class Terrarium {
     emit.rotation.x = Math.PI / 2;
 
     // arka duvar: mantar kaplama (cork bark) — yükleme sonrası dolar
-    this.backPanel = add(new THREE.PlaneGeometry(W, H), new THREE.MeshStandardMaterial({ color: 0x2a1d14, roughness: 1 }), 0, H / 2, -D / 2 + 0.2);
+    this.backPanel = add(new THREE.PlaneGeometry(W, H), new THREE.MeshStandardMaterial({ color: 0x2a1d14, roughness: 1, side: THREE.DoubleSide }), 0, H / 2, -D / 2 + 0.2);
   }
 
   buildGround() {
-    const set = pbrSet('forest_leaves_02', [2.2, 1.6]);
-    const seg = MOBILE ? 90 : 140;
+    // kabartma için ağ ~2 mm aralıklı; dokular yüklenince applySubstrate yükseklikleri günceller
+    const seg = MOBILE ? 160 : 300;
     const geo = new THREE.PlaneGeometry(W, D, seg, Math.round(seg * D / W));
     geo.rotateX(-Math.PI / 2);
     const p = geo.attributes.position;
-    const col = new Float32Array(p.count * 3);
+    const aw = new Float32Array(p.count * 3);
+    const w = [0, 0, 0];
     for (let i = 0; i < p.count; i++) {
       const x = p.getX(i), z = p.getZ(i);
-      const h = groundHeight(x, z);
-      p.setY(i, h);
-      // su altı ve kıyı: ıslak, koyu; göletin dibi çamurlu çakıl tonu
-      const wet = 1 - THREE.MathUtils.smoothstep(h, WATER_Y - 0.2, WATER_Y + 1.2);
-      const k = 1 - wet * 0.55;
-      col[i * 3] = k * (1 - wet * 0.1); col[i * 3 + 1] = k; col[i * 3 + 2] = k * (1 + wet * 0.05);
+      p.setY(i, groundHeight(x, z));
+      substrateWeights(x, z, baseHeight(x, z), w);
+      aw.set(w, i * 3);
     }
-    geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    geo.setAttribute('aW', new THREE.BufferAttribute(aw, 3));
     geo.computeVertexNormals();
-    const mat = new THREE.MeshStandardMaterial({ ...set, vertexColors: true, roughness: 1, color: 0xb8a890 });
-    const mesh = new THREE.Mesh(geo, mat);
+    const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0x2a2018, roughness: 1 }));
     mesh.receiveShadow = true;
     mesh.name = 'ground';
     this.scene.add(mesh);
     this.groundMesh = mesh;
 
-    // ön camdan görünen toprak kesiti (katmanlar: drenaj kili, ağ, toprak)
-    const cut = new THREE.PlaneGeometry(W, 1, seg, 1);
-    const cp = cut.attributes.position;
-    const cc = new Float32Array(cp.count * 3);
-    for (let i = 0; i < cp.count; i++) {
-      const x = cp.getX(i), top = cp.getY(i) > 0;
-      cp.setXYZ(i, x, top ? groundHeight(x, D / 2 - 0.05) : 0, D / 2 - 0.05);
+    // Close all four soil edges. The top and skirt share the same relief samples.
+    const vertices = [], indices = [];
+    const edges = [[-W / 2, D / 2, W / 2, D / 2], [W / 2, D / 2, W / 2, -D / 2],
+      [W / 2, -D / 2, -W / 2, -D / 2], [-W / 2, -D / 2, -W / 2, D / 2]];
+    for (const [x0, z0, x1, z1] of edges) {
+      const steps = Math.round(seg * Math.hypot(x1 - x0, z1 - z0) / W);
+      const start = vertices.length / 3;
+      for (let i = 0; i <= steps; i++) {
+        const x = THREE.MathUtils.lerp(x0, x1, i / steps), z = THREE.MathUtils.lerp(z0, z1, i / steps);
+        vertices.push(x, groundHeight(x, z), z, x, 0, z);
+        if (i < steps) { const k = start + i * 2; indices.push(k, k + 1, k + 2, k + 2, k + 1, k + 3); }
+      }
     }
-    const cutMat = new THREE.MeshStandardMaterial({ color: 0x2e2116, roughness: 1 });
+    const cut = new THREE.BufferGeometry();
+    cut.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+    cut.setIndex(indices);
+    cut.computeVertexNormals();
+    const cutMat = new THREE.MeshStandardMaterial({ color: 0x35271c, roughness: 1, side: THREE.DoubleSide });
     cutMat.onBeforeCompile = (sh) => {
-      sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying float vY;').replace('#include <begin_vertex>', '#include <begin_vertex>\nvY = position.y;');
-      sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying float vY;').replace('#include <color_fragment>', `#include <color_fragment>
-        float clay = 1.0 - smoothstep(2.6, 2.9, vY);
-        float spec = fract(sin(dot(floor(gl_FragCoord.xy / 3.0), vec2(12.9898, 78.233))) * 43758.5453);
-        diffuseColor.rgb = mix(diffuseColor.rgb * (0.8 + spec * 0.4), vec3(0.42, 0.24, 0.14) * (0.7 + spec * 0.5), clay);
-        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.03), smoothstep(2.75, 2.85, vY) * (1.0 - smoothstep(2.95, 3.05, vY)));`);
+      sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vSoil;')
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\nvSoil = position;');
+      sh.fragmentShader = sh.fragmentShader.replace('#include <common>', `#include <common>
+        varying vec3 vSoil;
+        float soilNoise(vec3 p) { return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453); }`)
+        .replace('#include <color_fragment>', `#include <color_fragment>
+          float grain = soilNoise(floor(vSoil * 12.0));
+          float clay = 1.0 - smoothstep(2.3, 2.8, vSoil.y);
+          float pores = smoothstep(0.72, 0.95, soilNoise(floor(vSoil * 3.5)));
+          diffuseColor.rgb *= (0.65 + grain * 0.55) * (1.0 - pores * 0.45);
+          diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.12, 0.061, 0.028) * (0.6 + grain * 0.6), clay);`);
     };
-    this.scene.add(new THREE.Mesh(cut, cutMat));
+    const skirt = new THREE.Mesh(cut, cutMat);
+    skirt.name = 'soil-sides';
+    skirt.receiveShadow = true;
+    this.scene.add(skirt);
+    this.cutGeo = cut;
+    const base = new THREE.Mesh(new THREE.BoxGeometry(W, 0.4, D), cutMat);
+    base.position.y = -0.2;
+    base.name = 'soil-base';
+    this.scene.add(base);
+  }
+
+  // dokular geldi: zemini yükseklik haritasıyla kabart, malzemeyi tak
+  applySubstrate(layers) {
+    relief = makeRelief(layers, substrateWeights);
+    const geo = this.groundMesh.geometry, p = geo.attributes.position;
+    for (let i = 0; i < p.count; i++) p.setY(i, groundHeight(p.getX(i), p.getZ(i)));
+    p.needsUpdate = true;
+    geo.computeVertexNormals();
+    geo.computeBoundingBox(); geo.computeBoundingSphere();
+    const cp = this.cutGeo.attributes.position;
+    for (let i = 0; i < cp.count; i++) if (cp.getY(i) > 0) cp.setY(i, groundHeight(cp.getX(i), cp.getZ(i)));
+    cp.needsUpdate = true;
+    this.cutGeo.computeVertexNormals();
+    this.cutGeo.computeBoundingSphere();
+    this.updatePondDepth();
+    this.groundMesh.material.dispose();
+    this.groundMesh.material = substrateMaterial(layers, WATER_Y);
+  }
+
+  updatePondDepth() {
+    if (!this.pondDepth) return;
+    const { data, width, height } = this.pondDepth.image;
+    for (let z = 0; z < height; z++) for (let x = 0; x < width; x++) {
+      data[z * width + x] = Math.max(0, WATER_Y - groundHeight((x + 0.5) / width * W - W / 2, (z + 0.5) / height * D - D / 2));
+    }
+    this.pondDepth.needsUpdate = true;
   }
 
   buildWater() {
-    // Gölet yüzeyi: hafif dalgalı, gökyüzü/oda yansıtan ince su; altında koyu çay rengi hacim
-    const geo = new THREE.PlaneGeometry(W, D, 1, 1);
-    geo.rotateX(-Math.PI / 2);
-    const mat = new THREE.MeshPhysicalMaterial({
-      color: 0x1e2a1a, roughness: 0.04, metalness: 0, transparent: true, opacity: 0.38, clearcoat: 1, envMapIntensity: 1.6, depthWrite: false,
-    });
+    this.pondDepth = new THREE.DataTexture(new Float32Array(256 * 192), 256, 192, THREE.RedFormat, THREE.FloatType);
+    this.pondDepth.minFilter = this.pondDepth.magFilter = THREE.LinearFilter;
+    this.updatePondDepth();
+    this.reflection = new PlanarReflection(this.renderer, this.scene, WATER_Y, { scale: MOBILE ? 0.25 : 0.4 });
     this.ripples = { value: Array.from({ length: 12 }, () => new THREE.Vector4(0, 0, -100, 0)) };
     this.ripI = 0;
-    mat.onBeforeCompile = (sh) => {
-      sh.uniforms.uTime = this.waterTime = { value: 0 };
-      sh.uniforms.uRip = this.ripples;
-      sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vWp;').replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\nvWp = (modelMatrix * vec4(transformed, 1.0)).xyz;');
-      sh.fragmentShader = sh.fragmentShader
-        .replace('#include <common>', `#include <common>
-          uniform float uTime; uniform vec4 uRip[12]; varying vec3 vWp;
-          float wv(vec2 p, float t) { return sin(p.x * 0.9 + t * 1.1) * 0.5 + sin(p.y * 1.3 - t * 0.8) * 0.4 + sin((p.x + p.y) * 2.1 + t * 1.7) * 0.2; }`)
-        .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
-          {
-            vec2 p = vWp.xz; float t = uTime;
-            float e = 0.15;
-            vec2 g = vec2(wv(p + vec2(e, 0.0), t) - wv(p - vec2(e, 0.0), t), wv(p + vec2(0.0, e), t) - wv(p - vec2(0.0, e), t)) * 0.02 / e;
-            // halkalar: küçük kaynaklarda sık ve hızlı sönen, büyüklerde geniş dalga
-            for (int i = 0; i < 12; i++) {
-              vec4 R = uRip[i];
-              float age = uTime - R.z;
-              if (age < 0.0 || age > 4.0) continue;
-              float d = length(p - R.xy);
-              float k = 7.0 / (0.4 + R.w);
-              float ring = R.w * exp(-age * (2.6 - R.w)) * sin(d * k - age * 11.0) * smoothstep(age * 5.0 + 0.6, age * 5.0 - 1.0, d);
-              g += normalize(p - R.xy + 0.0001) * ring * 0.18;
-            }
-            normal = normalize(normal + (viewMatrix * vec4(-g.x, 0.0, -g.y, 0.0)).xyz);
-          }`);
-    };
-    const water = new THREE.Mesh(geo, mat);
-    water.position.y = WATER_Y;
-    water.renderOrder = 2;
-    // yalnızca gölet çanağının üstünde görünsün: kenarları zeminin altında kalır
-    this.scene.add(water);
-    this.water = water;
-
-    // su hacmi: çay rengi (tanin) bulanıklık — zeminin hemen üstünde koyulaşan ince katman
-    const vol = new THREE.Mesh(new THREE.BoxGeometry(W - 0.2, WATER_Y - 0.6, D - 0.2), new THREE.MeshBasicMaterial({ color: 0x3b3a1e, transparent: true, opacity: 0.16, depthWrite: false }));
-    vol.position.y = (WATER_Y + 0.6) / 2;
-    this.scene.add(vol);
+    this.waterTime = { value: 0 };
+    const geo = new THREE.PlaneGeometry(W, D);
+    geo.rotateX(-Math.PI / 2);
+    const mat = new THREE.ShaderMaterial({
+      uniforms: { ...this.reflection.uniforms, uDepth: { value: this.pondDepth }, uTime: this.waterTime,
+        uRip: this.ripples, uLight: { value: 1 } },
+      vertexShader: `varying vec3 vWp; varying vec4 vRefl;
+        uniform mat4 uReflMat;
+        void main() {
+          vec4 wp = modelMatrix * vec4(position, 1.0);
+          vWp = wp.xyz; vRefl = uReflMat * wp;
+          gl_Position = projectionMatrix * viewMatrix * wp;
+        }`,
+      fragmentShader: `varying vec3 vWp; varying vec4 vRefl;
+        uniform sampler2D uDepth, tReflect; uniform float uTime, uLight; uniform vec4 uRip[12];
+        float wave(vec2 p) {
+          float h = sin(p.x * 1.1 + uTime * 1.7) * 0.006 + sin(p.y * 1.5 - uTime * 1.2) * 0.004;
+          for (int i = 0; i < 12; i++) {
+            vec4 r = uRip[i]; float age = uTime - r.z;
+            if (age < 0.0 || age > 4.0) continue;
+            float d = length(p - r.xy), front = d - age * 5.0;
+            h += r.w * 0.045 * sin(front * 5.0) * exp(-front * front * 1.4 - age * 1.2);
+          }
+          return h;
+        }
+        void main() {
+          float depth = texture2D(uDepth, vWp.xz / vec2(60.0, 45.0) + 0.5).r;
+          if (depth < 0.015) discard;
+          float e = 0.08;
+          vec2 p = vWp.xz;
+          vec2 slope = vec2(wave(p + vec2(e, 0.0)) - wave(p - vec2(e, 0.0)),
+            wave(p + vec2(0.0, e)) - wave(p - vec2(0.0, e))) / (2.0 * e);
+          slope *= smoothstep(0.0, 0.6, depth);
+          vec3 n = normalize(vec3(-slope.x, 1.0, -slope.y));
+          vec3 v = normalize(cameraPosition - vWp);
+          float f = 0.0204 + 0.9796 * pow(1.0 - abs(dot(n, v)), 5.0);
+          vec2 uv = vRefl.xy / vRefl.w + slope * 0.035;
+          vec3 reflected = texture2D(tReflect, clamp(uv, 0.001, 0.999)).rgb;
+          float path = min(18.0, depth / max(abs(v.y), 0.2));
+          float absorption = 1.0 - exp(-path * 0.055);
+          float a = f + absorption * (1.0 - f);
+          vec3 col = reflected * f + vec3(0.055, 0.043, 0.018) * uLight * absorption * (1.0 - f);
+          gl_FragColor = vec4(col / max(a, 0.0001), a * smoothstep(0.015, 0.12, depth));
+          #include <tonemapping_fragment>
+          #include <colorspace_fragment>
+        }`,
+      transparent: true, depthWrite: false, side: THREE.DoubleSide,
+    });
+    this.water = new THREE.Mesh(geo, mat);
+    this.water.position.y = WATER_Y;
+    this.water.renderOrder = 2;
+    this.scene.add(this.water);
+    this.reflection.hide(this.water);
   }
 
   buildMistParticles() {
@@ -262,7 +339,25 @@ export class Terrarium {
 
   async buildDecor() {
     const r = mulberry(11);
-    const load = (n) => loader.loadAsync(MB + n + '.glb').then((g) => g.scene);
+    const load = (n) => loader.loadAsync(MB + n + '.glb').then((g) => {
+      g.scene.traverse((o) => {
+        if (!o.isMesh) return;
+        const leaf = n === 'fern_02' || n === 'calathea_orbifolia_01';
+        o.material = physicalMaterial(o.material, {
+          metalness: 0, roughness: leaf ? 0.72 : 0.94,
+          clearcoat: leaf ? 0.12 : 0, clearcoatRoughness: 0.4,
+        });
+        if (leaf) {
+          o.material.transparent = false;
+          o.material.alphaTest = 0.4;
+          o.material.side = THREE.DoubleSide;
+          o.material.onBeforeCompile = foliageShader;
+          o.material.customProgramCacheKey = () => 'terra-leaf';
+          o.material.normalScale.setScalar(0.7);
+        }
+      });
+      return g.scene;
+    });
     const norm = (obj, size, axis = 'max') => {
       obj.updateMatrixWorld(true);
       const b = new THREE.Box3().setFromObject(obj);
@@ -276,13 +371,15 @@ export class Terrarium {
       return wrap;
     };
     const [cork1, cork2, moss, fern, calathea] = await Promise.all(['cork1', 'cork2', 'moss', 'fern_02', 'calathea_orbifolia_01'].map(load));
+    this.applySubstrate(await this.substrate);
+    const shade = [];
 
     const tint = (obj, c) => obj.traverse((o) => { if (o.isMesh) { o.material = o.material.clone(); o.material.color.set(c); } });
     const part = (scene, name) => { let m = null; scene.traverse((o) => { if (o.isMesh && o.name === name) m = o; }); const c = m.clone(); c.position.set(0, 0, 0); c.rotation.set(0, 0, 0); c.scale.set(1, 1, 1); return c; };
 
     // arka duvar: düz mantar meşe kabuğu levhaları, ince ve hafif açılı
-    tint(cork1, 0x6e5a4a);
-    tint(cork2, 0x7a6655);
+    tint(cork1, 0x94816c);
+    tint(cork2, 0x9b8871);
     [[-23, 20, 0.1], [-8, 26, -0.15], [7, 19, 0.2], [21, 25, -0.08], [-17, 36, 0.12], [13, 37, -0.1], [27, 38, 0.05]].forEach(([x, y, rz]) => {
       const c = norm(cork1.clone(), 34 + r() * 6);
       c.scale.y *= 0.4;
@@ -290,6 +387,7 @@ export class Terrarium {
       c.position.set(x, y, -D / 2 + 0.4 + r() * 0.6);
       this.fit(c, 0.3, false);
       this.scene.add(c);
+      shade.push(c);
     });
     this.backPanel.material.color.set(0x1d140d);
 
@@ -307,7 +405,7 @@ export class Terrarium {
     moss.traverse((o) => {
       if (!o.isMesh) return;
       const m = o.material;
-      m.color.setRGB(0.36, 0.5, 0.22);
+      m.color.setRGB(0.32, 0.42, 0.18);
       m.alphaTest = 0.5;
       m.userData.heightDiscard = `{ vec2 q = vMapUv - 0.5; float n = fract(sin(dot(floor(vMapUv * 40.0), vec2(12.9898, 78.233))) * 43758.5453);
         if (length(q) + sin(atan(q.y, q.x) * 5.0) * 0.05 + n * 0.06 > 0.42) discard; }`;
@@ -340,6 +438,7 @@ export class Terrarium {
       p.rotation.y = ry;
       this.fit(p, 0.5, true, 0.4);
       this.scene.add(p);
+      shade.push(p);
       const b = new THREE.Box3().setFromObject(p);
       // engel yalnızca gövde/kök kümesi; yapraklar üstten sarkar, altından geçilir
       this.obstacles.push({ x: p.position.x, z: p.position.z, r: Math.min(2.6, Math.min(b.max.x - b.min.x, b.max.z - b.min.z) * 0.12), canopy: Math.min(b.max.x - b.min.x, b.max.z - b.min.z) * 0.4 });
@@ -356,6 +455,8 @@ export class Terrarium {
     this.scene.add(litter);
     walk.push(litter);
     this.hf = bakeHeightfield(this.renderer, walk, { w: W, d: D, top: H });
+    contactAO(this.groundMesh.geometry, bakeHeightfield(this.renderer, [...walk, ...shade], { w: W, d: D, top: H }));
+    this.scene.add(groundDetails(this));
 
     // semender
     await loadNewt();
@@ -529,7 +630,15 @@ export class Terrarium {
     this.room.spill.intensity = 900 * lv;
     this.lampEmit.color.setScalar(0.15 + lv * 0.85);
     this.room.floorLamp.intensity = on ? 3000 : 9000;
+    this.scene.environmentIntensity = 0.12 + 0.24 * lv;
     if (this.waterTime) this.waterTime.value = this.time;
+    this.water.material.uniforms.uLight.value = lv;
+    if (this.newt) {
+      const skin = this.newt.mesh.material;
+      const wet = THREE.MathUtils.clamp(this.newt.swimBlend + s.humidity / 200, 0, 1);
+      skin.roughness = 0.56 - wet * 0.18;
+      skin.clearcoat = 0.12 + wet * 0.22;
+    }
     this.fog.value += (THREE.MathUtils.smoothstep(s.humidity, 70, 95) - this.fog.value) * Math.min(1, dt * 0.5);
 
     // sis püskürtme: tepeden yayılan ince damlacıklar, yavaşça çöker
@@ -551,7 +660,12 @@ export class Terrarium {
       v[i * 3 + 1] = v[i * 3 + 1] * (1 - dt * 1.4) - dt * 1.2;
       for (let a = 0; a < 3; a++) this.mistPos[i * 3 + a] += v[i * 3 + a] * dt;
       const x = this.mistPos[i * 3], y = this.mistPos[i * 3 + 1], z = this.mistPos[i * 3 + 2];
-      if (y < this.ground(x, z) || Math.abs(x) > W / 2 || this.mistLife[i] <= 0) { this.mistLife[i] = 0; this.mistPos[i * 3 + 1] = -999; }
+      const floor = this.ground(x, z);
+      if (y <= WATER_Y && floor < WATER_Y && this.mistLife[i] > 0) {
+        this.ripple(new THREE.Vector3(x, WATER_Y, z), 0.08);
+        this.mistLife[i] = 0;
+      }
+      if (y < floor || Math.abs(x) > W / 2 || Math.abs(z) > D / 2 || this.mistLife[i] <= 0) { this.mistLife[i] = 0; this.mistPos[i * 3 + 1] = -999; }
     }
     this.mist.geometry.attributes.position.needsUpdate = true;
 
@@ -574,9 +688,25 @@ export class Terrarium {
     }
     this.updateHands(dt);
     this.eco.update(dt, this.camera);
+    if (this.newt) {
+      const n = this.newt;
+      const wet = this.depthAt(n.pos.x, n.pos.z) > 0.3 && n.pos.y < WATER_Y;
+      if (wet && !this.newtWasWet) this.ripple(n.pos, 0.65);
+      this.newtWasWet = wet;
+      this.wakeTimer = Math.max(0, (this.wakeTimer ?? 0) - dt);
+      if (wet && n.speed > 0.15 && this.wakeTimer === 0) {
+        const nearSurface = Math.exp(-Math.max(0, WATER_Y - n.pos.y - 0.6) * 0.8);
+        this.ripple(n.pos, Math.min(0.65, n.speed * 0.16) * nearSurface);
+        this.wakeTimer = 0.22;
+      }
+    }
   }
 
-  renderFrame() { this.renderer.render(this.scene, this.camera); }
+  renderFrame() {
+    this.camera.updateMatrixWorld();
+    this.reflection.update(this.camera);
+    this.fx.render(this.time);
+  }
 
   resize() {
     const w = window.innerWidth, h = window.innerHeight;
@@ -584,6 +714,8 @@ export class Terrarium {
     this.camera.fov = w / h < 0.8 ? 54 : 38;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h);
+    this.fx.setSize(w, h);
+    this.reflection.setSize(w, h);
     const vfov = THREE.MathUtils.degToRad(this.camera.fov);
     const hfov = 2 * Math.atan(Math.tan(vfov / 2) * this.camera.aspect);
     const need = Math.max(112, (W / 2 + 15) / Math.tan(hfov / 2));   // ön köşeler kameraya daha yakın: pay bırak
@@ -669,6 +801,20 @@ function leafLitter(world, n) {
   geo.rotateX(-Math.PI / 2);
   geo.computeVertexNormals();
   const mat = new THREE.MeshStandardMaterial({ roughness: 0.9, side: THREE.DoubleSide });
+  mat.onBeforeCompile = (sh) => {
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec2 vLitterUv;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvLitterUv = uv;');
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying vec2 vLitterUv;')
+      .replace('#include <color_fragment>', `#include <color_fragment>
+        float mid = abs(vLitterUv.x - 0.5);
+        float vein = 1.0 - smoothstep(0.004, 0.023, mid);
+        float branches = pow(0.5 + 0.5 * cos((vLitterUv.y - mid * 0.65) * 85.0), 18.0);
+        float edge = smoothstep(0.3, 0.5, mid);
+        float mottled = sin(vLitterUv.x * 39.0 + sin(vLitterUv.y * 31.0)) * sin(vLitterUv.y * 57.0);
+        diffuseColor.rgb *= 0.8 + mottled * 0.12 + vein * 0.35 + branches * 0.16 - edge * 0.26;`);
+  };
   const mesh = new THREE.InstancedMesh(geo, mat, n);
   const r = mulberry(5);
   const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), s = new THREE.Vector3(), v = new THREE.Vector3(), c = new THREE.Color();
@@ -685,7 +831,7 @@ function leafLitter(world, n) {
     m4.compose(v, q, s);
     mesh.setMatrixAt(k, m4);
     // kahverengi, sarımsı, koyu kırmızımsı tonlar (meşe, kayın, badem yaprağı)
-    c.setHSL(0.04 + r() * 0.05, 0.35 + r() * 0.25, 0.03 + r() * 0.05);
+    c.setHSL(0.055 + r() * 0.045, 0.35 + r() * 0.25, 0.06 + r() * 0.065);
     mesh.setColorAt(k, c);
     k++;
   }
@@ -693,6 +839,74 @@ function leafLitter(world, n) {
   mesh.receiveShadow = true;
   mesh.castShadow = true;
   return mesh;
+}
+
+// Millimetre-scale solids break up the flat silhouette of texture-only soil
+// and moss. Instancing keeps the detail to two draw calls; physics retains the
+// scanned surface rather than treating each soil crumb as an obstacle.
+function groundDetails(world) {
+  const group = new THREE.Group();
+  const r = mulberry(817);
+  const matrix = new THREE.Matrix4(), rotation = new THREE.Quaternion();
+  const euler = new THREE.Euler(), position = new THREE.Vector3(), scale = new THREE.Vector3();
+  const color = new THREE.Color();
+  const grains = new THREE.InstancedMesh(
+    new THREE.IcosahedronGeometry(1, 0),
+    new THREE.MeshStandardMaterial({ roughness: 0.87 }),
+    MOBILE ? 1400 : 4200,
+  );
+  let count = 0;
+  for (let i = 0; i < grains.instanceMatrix.count; i++) {
+    const x = (r() - 0.5) * (W - 1), z = (r() - 0.5) * (D - 1);
+    const y = groundHeight(x, z);
+    if (world.ground(x, z) > y + 0.18) continue;
+    const size = 0.035 + r() ** 3 * 0.17;
+    position.set(x, y + size * 0.18, z);
+    rotation.setFromEuler(euler.set(r() * 3, r() * 6.28, r() * 3));
+    scale.set(size, size * (0.35 + r() * 0.4), size * (0.7 + r() * 0.6));
+    grains.setMatrixAt(count, matrix.compose(position, rotation, scale));
+    const pebble = r() > 0.84;
+    color.setHSL(0.065 + r() * 0.035, pebble ? 0.12 : 0.32, pebble ? 0.17 + r() * 0.12 : 0.025 + r() * 0.065);
+    grains.setColorAt(count++, color);
+  }
+  grains.count = count;
+  grains.receiveShadow = true;
+  group.add(grains);
+
+  const moss = new THREE.InstancedMesh(
+    new THREE.ConeGeometry(0.035, 0.14, 4, 1),
+    new THREE.MeshStandardMaterial({ roughness: 0.88 }),
+    MOBILE ? 1800 : 6500,
+  );
+  const patches = [[5, -12, 5.5], [-22, -12, 4.5], [22, 6, 4], [-1, 2, 3.2], [9, 12, 2.8], [-26, 0, 2.8]];
+  count = 0;
+  for (let i = 0; i < moss.instanceMatrix.count; i++) {
+    const [cx, cz, radius] = patches[i % patches.length];
+    const angle = r() * Math.PI * 2, distance = Math.sqrt(r()) * radius;
+    const x = cx + Math.cos(angle) * distance, z = cz + Math.sin(angle) * distance;
+    const y = world.ground(x, z), soil = groundHeight(x, z);
+    if (Math.abs(x) > W / 2 - 0.5 || y < WATER_Y + 0.2 || y - soil > 1.6 || y - soil < 0.03) continue;
+    const height = 0.5 + r() * 0.8;
+    position.set(x, y + height * 0.04, z);
+    rotation.setFromEuler(euler.set((r() - 0.5) * 0.75, r() * 6.28, (r() - 0.5) * 0.75));
+    scale.set(0.65 + r() * 0.65, height, 0.65 + r() * 0.65);
+    moss.setMatrixAt(count, matrix.compose(position, rotation, scale));
+    color.setHSL(0.19 + r() * 0.065, 0.3 + r() * 0.18, 0.055 + r() * 0.09);
+    moss.setColorAt(count++, color);
+  }
+  moss.count = count;
+  moss.receiveShadow = true;
+  group.add(moss);
+  return group;
+}
+
+// Taban katman ağırlıkları [toprak, yaprak döküntüsü, ıslak çakıllı kıyı]
+function substrateWeights(x, z, h, out) {
+  const bank = 1 - THREE.MathUtils.smoothstep(h + fbm3(x * 0.3, z * 0.3, 3.1, 2) * 0.8, WATER_Y - 0.4, WATER_Y + 1.6);
+  const n = fbm3(x * 0.08, z * 0.08, 7.7, 3) + fbm3(x * 0.35, z * 0.35, 2.2, 2) * 0.25;
+  const leaf = THREE.MathUtils.smoothstep(n, -0.05, 0.2) * (1 - bank);
+  out[0] = 1 - bank - leaf; out[1] = leaf; out[2] = bank;
+  return out;
 }
 
 // Solucan (Lumbricus): halkalı pembe-kahve tüp; kıvrılma shader'da

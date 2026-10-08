@@ -203,7 +203,7 @@ export class WaterSim {
   update(dt) {
     dt = Math.min(dt, 0.05);
     this.ambient(dt);
-    this.acc += dt;
+    this.acc = Math.min(this.acc + dt, 4 / STEP_HZ);
     const steps = Math.min(4, Math.floor(this.acc * STEP_HZ));
     this.acc -= steps / STEP_HZ;
     const r = this.renderer;
@@ -219,7 +219,6 @@ export class WaterSim {
       r.setRenderTarget(this.rts[this.cur]);
       r.render(this.quadScene, this.cam);
     }
-    this.drops.length = 0;
     const height = this.rts[this.cur].texture;
     WU.tHeight.value = height;
 

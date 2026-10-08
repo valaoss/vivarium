@@ -1,10 +1,11 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { patchUnderwater } from '../render/water.js';
+import { patchUnderwater, plantWaterMotion } from '../render/water.js';
 import { mulberry } from '../render/textures.js';
 import { sandHeight } from './substrate.js';
 import { buildFrogbit, buildLudwigia } from './proceduralPlants.js';
 import { TANK, HALF_W, HALF_D } from '../config.js';
+import { foliageShader, physicalMaterial } from '../render/materials.js';
 
 export const PLANT_TYPES = {
   vallisneria: { name: 'Vallisneria', price: 6, desc: 'Uzun, şerit yapraklı çim bitkisi. Hızlı büyür, suyu temizler.', o2: 1.2, uptake: 1.3 },
@@ -80,6 +81,8 @@ function lanceGeometry({ width = 0.24, petiole = 0.08, fold = 0.25, segs = 16, o
 // Salınım ve sağlık rengi için ortak shader eki
 function plantShader(kind) {
   return (shader) => {
+    foliageShader(shader);
+    plantWaterMotion(shader, 'uv.y * uv.y');
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>
         uniform float uTime;
@@ -126,10 +129,7 @@ function plantShader(kind) {
           // yosun kaplaması
           float alg = smoothstep(0.35, 0.8, pnoise(vWPos.xz * 1.7 + vWPos.y) * 0.6 + pnoise(lu * 18.0) * 0.5) * uAlgae;
           diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.2, 0.24, 0.08), alg * 0.75);
-        }`)
-      .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
-        // ışık arkadan geçtiğinde yaprak dokusundan sızan yeşil (sahte translucency)
-        totalEmissiveRadiance += diffuseColor.rgb * vec3(0.25, 0.55, 0.15) * uLamp * 0.18 * (1.0 - abs(vLeafUv.x - 0.5));`);
+        }`);
   };
 }
 
@@ -150,6 +150,8 @@ function bladeTexture() {
 
 // glTF bitkiler için salınım + sağlık/yosun rengi (yerel birim: metre, taban y=0)
 function gltfPlantShader(shader) {
+  foliageShader(shader);
+  plantWaterMotion(shader, 'pow(clamp(position.y / 1.2, 0.0, 1.0), 2.0)');
   shader.vertexShader = shader.vertexShader
     .replace('#include <common>', '#include <common>\nuniform float uTime;\nuniform float uPhase;')
     .replace('#include <begin_vertex>', `#include <begin_vertex>
@@ -259,7 +261,7 @@ export function createPlants(scene) {
     const uni = { uHealth: plant.uHealth, uPhase: { value: r() * 6.28 }, uUnder: { value: new THREE.Color(...(MODEL_PLANTS[plant.type].under ?? [1, 1, 1])) } };
     const root = new THREE.Group();
     for (const part of variants[Math.floor(r() * variants.length)]) {
-      const m = part.material.clone();
+      const m = physicalMaterial(part.material, { metalness: 0, roughness: 0.65, clearcoat: 0.12, clearcoatRoughness: 0.4 });
       m.side = THREE.DoubleSide;
       m.alphaTest = 0.5;
       m.transparent = false;

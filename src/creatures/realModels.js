@@ -1,8 +1,9 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { patchUnderwater } from '../render/water.js';
-import { SWIM_VERT_DECL, SWIM_VERT, PATTERN_DECL, FISH_SHARED, MOUTH_FRAG } from './fishMaterial.js';
+import { SWIM_VERT_DECL, SWIM_VERT, SWIM_NORMAL, PATTERN_DECL, FISH_SHARED, MOUTH_FRAG } from './fishMaterial.js';
 import { SPECIES } from './species.js';
+import { physicalMaterial } from '../render/materials.js';
 
 /*
  * Gerçek balık modelleri (Sketchfab, CC-BY). İskeletli modeller bind pozunda
@@ -218,14 +219,14 @@ export function makeRealFishMeshes(key, fishUniforms) {
   const real = REAL_FISH[key];
   return real.parts.map((p) => {
     // Fotogrametri taramaları ışıksız (unlit) gelir: sahne ışığını alsın
-    const m = p.material.isMeshBasicMaterial
-      ? new THREE.MeshStandardMaterial({ map: p.material.map, roughness: 0.55, metalness: 0 })
-      : p.material.clone();
+    const m = physicalMaterial(p.material, {
+      roughness: 0.48, metalness: 0, clearcoat: 0.22,
+      clearcoatRoughness: 0.3, ior: 1.38,
+    });
     // taramalarda metal haritası pulları krom gibi gösterir
-    if (m.metalnessMap || m.metalness > 0.2) { m.metalnessMap = null; m.roughnessMap = null; m.metalness = 0; m.roughness = 0.55; }
-    if (m.clearcoat) { m.clearcoat = Math.min(m.clearcoat, 0.12); m.clearcoatRoughness = Math.max(m.clearcoatRoughness, 0.35); }
+    m.metalnessMap = null;
     m.side = THREE.DoubleSide;
-    m.transparent = true;
+    m.transparent = p.material.transparent;
     m.depthWrite = true;
     m.alphaTest = 0.04;
     patchUnderwater(m, {
@@ -234,6 +235,7 @@ export function makeRealFishMeshes(key, fishUniforms) {
       extra: (sh) => {
         sh.vertexShader = sh.vertexShader
           .replace('#include <common>', '#include <common>\n' + SWIM_VERT_DECL)
+          .replace('#include <beginnormal_vertex>', '#include <beginnormal_vertex>\n' + SWIM_NORMAL)
           .replace('#include <begin_vertex>', '#include <begin_vertex>\n' + SWIM_VERT);
         sh.fragmentShader = sh.fragmentShader
           .replace('#include <common>', '#include <common>\n' + PATTERN_DECL + '\nuniform float uOverlay;')
@@ -244,6 +246,16 @@ export function makeRealFishMeshes(key, fishUniforms) {
     });
     const mesh = new THREE.Mesh(p.geo, m);
     mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    const depth = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: m.map, alphaMap: m.alphaMap, alphaTest: m.alphaTest, side: m.side });
+    depth.onBeforeCompile = (sh) => {
+      Object.assign(sh.uniforms, fishUniforms);
+      sh.vertexShader = sh.vertexShader
+        .replace('#include <common>', '#include <common>\n' + SWIM_VERT_DECL)
+        .replace('#include <begin_vertex>', '#include <begin_vertex>\n' + SWIM_VERT);
+    };
+    depth.customProgramCacheKey = () => 'fish-swim-depth';
+    mesh.customDepthMaterial = depth;
     mesh.renderOrder = 7;
     return mesh;
   });

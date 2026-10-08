@@ -57,6 +57,21 @@ export const SWIM_VERT = /* glsl */ `
   }
 `;
 
+// Inverse-transpose of the lateral swim deformation; highlights turn with the
+// body instead of remaining painted onto the fish's undeformed pose.
+export const SWIM_NORMAL = /* glsl */ `
+  {
+    float s = aSeg.x;
+    float frequency = mix(5.2, 11.0, uEel);
+    float envelope = mix(0.03 + s * s * 1.05, 0.3 + 0.7 * s, uEel);
+    float derivative = mix(2.1 * s, 0.7, uEel);
+    float phase = uPhase - s * frequency;
+    float slope = -(uAmp * (sin(phase) * derivative - cos(phase) * frequency * envelope) + 2.0 * uBend * s);
+    objectNormal.z -= slope * objectNormal.x;
+    objectNormal = normalize(objectNormal);
+  }
+`;
+
 // Açık ağızdan görünen iç yüzey: karanlık ağız boşluğu
 export const MOUTH_FRAG = /* glsl */ `
   if (!gl_FrontFacing && vSeg.x < 0.1) diffuseColor.rgb *= 0.12;
@@ -321,6 +336,7 @@ export function makeFishMaterials(fishUniforms) {
     extra: (sh) => {
       sh.vertexShader = sh.vertexShader
         .replace('#include <common>', '#include <common>\n' + SWIM_VERT_DECL)
+        .replace('#include <beginnormal_vertex>', '#include <beginnormal_vertex>\n' + SWIM_NORMAL)
         .replace('#include <begin_vertex>', '#include <begin_vertex>\n' + SWIM_VERT);
       sh.fragmentShader = sh.fragmentShader
         .replace('#include <common>', '#include <common>\n' + PATTERN_DECL)

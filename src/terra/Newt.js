@@ -5,6 +5,7 @@ import { Agent, senseVision, senseVibration } from '../eco/Agent.js';
 import { Brain } from '../eco/Brain.js';
 import { NEWT_ACTIONS } from './newtActions.js';
 import { twoBoneIK, dropToGround } from '../eco/ik.js';
+import { physicalMaterial, skinShader } from '../render/materials.js';
 
 // Japon kırmızı karınlı semenderi (Cynops pyrrhogaster), ffish.asia CC0 taraması.
 // Modeldeki tek animasyon bir solucan yeme sahnesi; yürüme, yüzme, nefes ve av hareketleri
@@ -112,10 +113,13 @@ export class Newt extends Agent {
     this.model = model;
 
     // Islak deri: hafif parlak, ince kabarık doku
-    const m = this.mesh.material;
-    m.roughness = 0.42;
-    m.metalness = 0;
-    if ('clearcoat' in m) { m.clearcoat = 0.3; m.clearcoatRoughness = 0.5; }
+    const m = physicalMaterial(this.mesh.material, {
+      roughness: 0.48, metalness: 0, clearcoat: 0.24,
+      clearcoatRoughness: 0.24, ior: 1.38,
+    });
+    m.onBeforeCompile = skinShader;
+    m.customProgramCacheKey = () => 'newt-skin';
+    this.mesh.material = m;
 
     this.initFeet();
     const p = d.pos ?? [0, 0, 0];

@@ -6,14 +6,15 @@ import { BokehPass } from 'three/addons/postprocessing/BokehPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
+import { MOBILE } from '../config.js';
 
 const FinalShader = {
   uniforms: {
     tDiffuse: { value: null },
     uTime: { value: 0 },
-    uVignette: { value: 0.55 },
-    uCA: { value: 0.00035 },
-    uGrain: { value: 0.025 },
+    uVignette: { value: 0.18 },
+    uCA: { value: 0.000025 },
+    uGrain: { value: 0.003 },
   },
   vertexShader: /* glsl */ `
     varying vec2 vUv;
@@ -31,7 +32,7 @@ const FinalShader = {
       col.r = texture2D(tDiffuse, vUv - off).r;
       col.g = texture2D(tDiffuse, vUv).g;
       col.b = texture2D(tDiffuse, vUv + off).b;
-      float vig = smoothstep(0.95, 0.2, r2 * 2.2 * uVignette + 0.1);
+      float vig = 1.0 - smoothstep(0.2, 0.95, r2 * 2.2 + 0.1);
       col *= mix(1.0, vig, uVignette);
       col += (h(vUv * 1000.0 + fract(uTime)) - 0.5) * uGrain * (0.3 + dot(col, vec3(0.33)));
       gl_FragColor = vec4(max(col, 0.0), 1.0);
@@ -54,12 +55,13 @@ export function createPostFX(renderer, scene, camera) {
       const m = o.material;
       if (o.visible && m && (m.transparent || m.depthWrite === false)) { o.visible = false; hidden.push(o); }
     });
-    bokehRender(...args);
-    for (const o of hidden) o.visible = true;
+    try { bokehRender(...args); }
+    finally { for (const o of hidden) o.visible = true; }
   };
   composer.addPass(bokeh);
 
-  const bloom = new UnrealBloomPass(new THREE.Vector2(size.x, size.y), 0.32, 0.6, 0.88);
+  const bloom = new UnrealBloomPass(new THREE.Vector2(size.x, size.y), 0.12, 0.4, 1.15);
+  bloom.enabled = !MOBILE;
   composer.addPass(bloom);
 
   const final = new ShaderPass(FinalShader);

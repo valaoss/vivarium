@@ -56,6 +56,10 @@ Teraryum (Dock → Teraryum): Japon kırmızı karınlı semenderi için yarıs�
 - Yosun: "[Ground moss fores square 2k](https://sketchfab.com/3d-models/8b5699d30035485c9564035bb4458a91)" — 3dhdscan, CC-BY 4.0
 - Eğrelti `fern_02`, `calathea_orbifolia_01` ve zemin dokusu `forest_leaves_02`: Poly Haven, CC0
 
+Eğrelti ve calathea modellerinin renk/alfa, normal ve pürüzlülük dokuları orijinal Poly Haven 2K kaynaklarından yenilendi; WebP olarak GLB içinde saklanır. Kaynaklar: [Fern 02](https://polyhaven.com/a/fern_02), [Calathea Orbifolia 01](https://polyhaven.com/a/calathea_orbifolia_01). Teraryum tabanındaki `mud_forest`, `dry_decay_leaves` ve `brown_mud_rocks_01` dokuları da Poly Haven CC0 kaynaklarıdır.
+
+Tarama modelleri fiziksel malzemelerle aydınlatılır; semenderde nemle değişen deri parlaklığı, yapraklarda arka ışık geçirgenliği, toprak/kum/yosunda küçük 3B yüzey detayları kullanılır. Mobilde yüzey detaylarının sayısı azaltılır ve bloom kapatılır; kenar yumuşatma korunur.
+
 Melek balığı: "[Freshwater Angelfish](https://sketchfab.com/3d-models/37475fc6c8904b6bbf7e27617bd851b8)" — Wataru Onuki (monte-hotate), Sketchfab Standard lisansı; yabani gümüş-çizgili desenle boyandı.
 
 CC0 (atıf gerekmez, teşekkürler): ffishAsia & floraZia taramaları (kılıçkuyruk; medaka gövdesi zebra danio, kiraz barbus ve harlequin rasbora desenleriyle; loach gövdesi kuhli deseniyle; karides; sivrisinek balığı gövdesi siyah moli ve plati renkleriyle; cennet balığı gövdesi cüce gurami deseniyle), Poly Haven `rock_07`, `rock_09`, `dead_quiver_branch_01`. Modeller telefon için sadeleştirildi ve dokuları WebP'ye çevrildi.

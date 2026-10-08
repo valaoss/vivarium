@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
-import { TANK, HALF_W, HALF_D } from '../config.js';
+import { TANK, HALF_W, HALF_D, MOBILE } from '../config.js';
 import { patchUnderwater } from '../render/water.js';
 import { fbm3, noise3, mulberry } from '../render/textures.js';
 import { pbrSet, triplanarHook } from '../render/assets.js';
@@ -111,6 +111,26 @@ export function createSubstrate(scene) {
   pebbles.castShadow = true;
   pebbles.receiveShadow = true;
   group.add(pebbles);
+
+  // Sub-millimetre grains supply parallax at close range without another
+  // texture layer or one draw call per grain.
+  const grains = new THREE.InstancedMesh(
+    new THREE.IcosahedronGeometry(1, 0),
+    patchUnderwater(new THREE.MeshStandardMaterial({ roughness: 0.92 }), { key: 'sand-grains' }),
+    Math.round((MOBILE ? 700 : 2400) * TANK.sx * TANK.sz),
+  );
+  for (let i = 0; i < grains.count; i++) {
+    const x = (r() - 0.5) * (TANK.w - 0.5), z = (r() - 0.5) * (TANK.d - 0.5);
+    const size = 0.025 + r() * 0.055;
+    p3.set(x, sandHeight(x, z) + size * 0.15, z);
+    q.setFromEuler(new THREE.Euler(r() * 3, r() * 6, r() * 3));
+    s.set(size, size * 0.6, size * (0.7 + r() * 0.6));
+    grains.setMatrixAt(i, m4.compose(p3, q, s));
+    const tone = 0.22 + r() * 0.35;
+    grains.setColorAt(i, col.setRGB(tone, tone * 0.85, tone * 0.62));
+  }
+  grains.receiveShadow = true;
+  group.add(grains);
 
   const rocks = createRocks(group);
   const wood = createDriftwood(group);

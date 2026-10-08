@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { MOBILE, TANK, TANKS, HALF_W, HALF_D, LIGHT_ON_HOUR, LIGHT_OFF_HOUR, OFFLINE_CAP_MIN, GAME_MIN_PER_SEC } from '../config.js';
 import { createRenderer, createCamera, createControls, createRoom } from '../render/scene.js';
-import { WU, createWaterVolume, createWaterSurface, createMeniscus, createGodRays } from '../render/water.js';
+import { WU, waterCurrent, createWaterVolume, createWaterSurface, createMeniscus, createGodRays } from '../render/water.js';
 import { createTank, ALGAE_GRID } from '../render/glass.js';
 import { PlanarReflection, PlaneMirror } from '../render/reflection.js';
 import { MIRROR_U } from '../render/glass.js';
@@ -615,6 +615,7 @@ export class Game {
   updateFood(dt, dtMin) {
     const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(1, 1, 1);
     let n = 0;
+    const current = new THREE.Vector3();
     for (let i = this.food.length - 1; i >= 0; i--) {
       const f = this.food[i];
       if (f.eaten) { this.food.splice(i, 1); continue; }
@@ -657,11 +658,11 @@ export class Game {
         }
       } else if (f.state === 'float') {
         f.t -= dt;
-        f.pos.x += Math.sin(this.time + i) * dt * 0.4;
+        f.pos.addScaledVector(waterCurrent(f.pos, this.time, WU.uFlow.value, current), dt);
         if (f.t < 0) f.state = 'sink';
       } else if (f.state === 'sink') {
         f.pos.y -= dt * (0.9 + Math.sin(this.time * 3 + i) * 0.3);
-        f.pos.x += Math.sin(this.time * 2 + i * 1.7) * dt * 0.6;
+        f.pos.addScaledVector(waterCurrent(f.pos, this.time, WU.uFlow.value, current), dt);
         f.rot.x += f.spin * dt; f.rot.z += f.spin * 0.7 * dt;
         const floor = sandHeight(f.pos.x, f.pos.z) + 0.12;
         if (f.pos.y <= floor) { f.pos.y = floor; f.state = 'settled'; f.rot.set(-Math.PI / 2, 0, f.rot.z); }
@@ -671,6 +672,8 @@ export class Game {
       }
     }
     for (const f of this.food) {
+      f.pos.x = THREE.MathUtils.clamp(f.pos.x, -HALF_W + 0.3, HALF_W - 0.3);
+      f.pos.z = THREE.MathUtils.clamp(f.pos.z, -HALF_D + 0.3, HALF_D - 0.3);
       if (n >= 240) break;
       q.setFromEuler(f.rot);
       const fade = f.state === 'settled' ? Math.max(0.5, 1 - f.age / 300) : 1;
@@ -1117,6 +1120,7 @@ export class Game {
     }
 
     const bdt = dt * Math.min(this.speed, 3);
+    WU.uFlow.value = this.state.airstone ? 0.7 : 0.25;
     const world = {
       fish: this.creatures,
       food: this.food,
@@ -1136,6 +1140,15 @@ export class Game {
     this.eco.time += bdt;
     this.eco.vib = this.eco.vib.filter((v) => this.eco.time - v.t < 1.2);
     for (const c of this.creatures) c.update(bdt, world);
+    // Fixed slots avoid swapping wake sources every frame as fish change speed.
+    for (let i = 0; i < WU.uWake.value.length; i++) {
+      const c = this.creatures[i];
+      const wake = WU.uWake.value[i], velocity = WU.uWakeVelocity.value[i];
+      if (c?.vel) {
+        wake.set(c.pos.x, c.pos.y, c.pos.z, Math.max(1.2, c.total * 0.65));
+        velocity.lerp(c.vel, 1 - Math.exp(-bdt * 8));
+      } else { wake.set(0, -100, 0, 0); velocity.set(0, 0, 0); }
+    }
     this.nest.update(bdt, world.flow);
     this.updateFood(bdt, dtMin);
     this.updateWaterChange(dt);
@@ -1176,10 +1189,19 @@ export class Game {
     // Kabarcıklar ve hava taşı
     this.bubbles.userData.enabled = this.state.airstone;
     this.bubbles.userData.update(dt, 0);
-    // yüzeye yakın yüzen balıklar ve yüzen yemler suyu kıpırdatır
+    // Near-surface wakes depend on depth, body size and speed, not random frame timing.
     for (const c of this.creatures) {
-      if (c.pos.y > TANK.water - 1.6 && Math.random() < dt * 14) {
-        this.waterSim.drop(c.pos.x, c.pos.z, 0.5 + (c.sp.size ?? 3) * 0.12, -0.012 - Math.random() * 0.012);
+      c.wakeTimer = Math.max(0, (c.wakeTimer ?? 0) - dt);
+      if (!c.vel || c.wakeTimer > 0) continue;
+      const top = c.pos.y + (c.localBox?.max.y ?? 0.3) * (c.data.size ?? 1);
+      const coupling = Math.exp(-Math.max(0, TANK.water - top) * 1.4);
+      const motion = Math.min(1, c.vel.length() / 8);
+      if (coupling * motion > 0.015) {
+        const r = Math.max(0.35, (c.total ?? 3) * 0.16);
+        const strength = 0.04 * coupling * motion;
+        this.waterSim.drop(c.pos.x, c.pos.z, r, -strength);
+        this.waterSim.drop(c.pos.x - c.fwd.x * r * 1.5, c.pos.z - c.fwd.z * r * 1.5, r, strength * 0.7);
+        c.wakeTimer = 0.12;
       }
     }
     this.waterSim.update(dt);

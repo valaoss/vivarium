@@ -431,8 +431,7 @@ export class Fish extends Agent {
         break;
       case 'sleep':
         seekTo(this.goal, 0.5);
-        if (pos.distanceTo(this.goal) < 1.5) speed = 0.05;
-        speed = sp.cruise * 0.18;
+        speed = pos.distanceTo(this.goal) < 1.5 ? 0.05 : sp.cruise * 0.18;
         maxTurn = 1;
         break;
       case 'school': {
@@ -508,7 +507,7 @@ export class Fish extends Agent {
     }
 
     // --- Yürüyüş ritmi ---
-    const calm = !fleeing && !['seek', 'eat', 'hunt', 'chase', 'court', 'graze', 'root', 'wait', 'air'].includes(state);
+    const calm = !fleeing && !['sleep', 'rest', 'seek', 'eat', 'hunt', 'chase', 'court', 'graze', 'root', 'wait', 'air'].includes(state);
     this.thrust = 1;
     if (calm && (this.gait === 'burst' || this.gait === 'hop')) {
       if (this.coast > 0) {
@@ -573,11 +572,11 @@ export class Fish extends Agent {
       pitch = THREE.MathUtils.clamp(pitch, -0.96, 0.96);
       this.fwd.set(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch));
       this.lastYaw = yaw;
-      this.yawRate = THREE.MathUtils.lerp(this.yawRate, stepYaw / Math.max(dt, 1e-4), 0.2);
+      this.yawRate = THREE.MathUtils.lerp(this.yawRate, stepYaw / Math.max(dt, 1e-4), 1 - Math.exp(-dt * 13.4));
     } else {
-      this.yawRate *= 0.9;
+      this.yawRate *= Math.exp(-dt * 6.3);
       // dururken yatay pozisyona dön
-      this.fwd.y *= 0.95; this.fwd.normalize();
+      this.fwd.y *= Math.exp(-dt * 3.1); this.fwd.normalize();
     }
 
     // yavrular büyüdükçe ölçek
@@ -593,11 +592,11 @@ export class Fish extends Agent {
     else if (this.gait === 'burst' && calm) { amp += 0.06; freq += 6; }
     if (this.gait === 'hover' && spd < 1.5) amp *= 0.5;             // yerinde asılı: yalnız yüzgeçler
     this.u.uPhase.value += dt * freq;
-    this.u.uAmp.value = THREE.MathUtils.lerp(this.u.uAmp.value, amp, this.thrust ? 0.2 : 0.06);
+    this.u.uAmp.value = THREE.MathUtils.lerp(this.u.uAmp.value, amp, 1 - Math.exp(-dt * (this.thrust ? 13.4 : 3.7)));
     const turnBend = THREE.MathUtils.clamp(-this.yawRate * 0.09, -0.35, 0.35);
     // lepistes S gösterisi: gövde bükülü ve hızla titrer
     const bendT = this.cstart > 0 ? this.cside * 1.1 : turnBend + this.quiver * (0.22 + 0.08 * Math.sin(this.time2 = (this.time2 ?? 0) + dt * 40));
-    this.bend = THREE.MathUtils.lerp(this.bend, bendT, this.cstart > 0 ? 0.45 : 0.15);
+    this.bend = THREE.MathUtils.lerp(this.bend, bendT, 1 - Math.exp(-dt * (this.cstart > 0 ? 35.9 : 9.75)));
     this.u.uBend.value = this.bend;
     this.u.uFlap.value += dt * (spd < 1.5 ? 11 : 4);
     this.u.uIch.value = THREE.MathUtils.lerp(this.u.uIch.value, d.ich ?? 0, 0.05);
@@ -620,7 +619,7 @@ export class Fish extends Agent {
     // dönüşlerde hafif yatma
     const roll = THREE.MathUtils.clamp(this.yawRate * 0.08, -0.4, 0.4);
     _q.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), roll));
-    this.group.quaternion.slerp(_q, 0.5);
+    this.group.quaternion.slerp(_q, 1 - Math.exp(-dt * 41.6));
     this.group.position.copy(pos);
     this.keepInside(world, state === 'air', dt);
     // Ağızdaki yem dudakların hemen içinde durur
@@ -842,6 +841,9 @@ export class Fish extends Agent {
   }
 
   dispose() {
-    this.group.traverse((o) => { if (o.material) o.material.dispose?.(); });
+    this.group.traverse((o) => {
+      o.material?.dispose?.();
+      o.customDepthMaterial?.dispose();
+    });
   }
 }

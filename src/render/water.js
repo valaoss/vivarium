@@ -3,6 +3,9 @@ import { TANK, HALF_W, HALF_D } from '../config.js';
 
 // Sualtındaki her materyalin paylaştığı uniform'lar. Tek yerden güncellenir.
 export const WU = {
+  uFlow: { value: 0.25 },
+  uWake: { value: Array.from({ length: 8 }, () => new THREE.Vector4(0, -100, 0, 0)) },
+  uWakeVelocity: { value: Array.from({ length: 8 }, () => new THREE.Vector3()) },
   uTime: { value: 0 },
   uLamp: { value: 1 },                                   // lamba yoğunluğu 0..1
   uLampColor: { value: new THREE.Color(1, 0.98, 0.94) },
@@ -45,6 +48,47 @@ vec3 baseWaves(vec2 p, float t, float amp) {
   return r * amp;
 }
 `;
+
+// Shared current field: plants and loose food respond to the same circulation.
+export function waterCurrent(p, time, strength, out) {
+  return out.set(
+    (0.35 * Math.sin(p.z / TANK.d * 6.283 + time * 0.23) + 0.12) * strength,
+    0,
+    0.22 * Math.cos(p.x / TANK.w * 6.283 + time * 0.19) * strength,
+  );
+}
+
+// Apply in world space so rotated/scaled plants bend with the water together.
+export function plantWaterMotion(shader, weight, floating = false) {
+  shader.vertexShader = shader.vertexShader.replace('#include <common>', `#include <common>
+    uniform float uFlow;
+    uniform vec4 uWake[8]; uniform vec3 uWakeVelocity[8];
+    uniform vec3 uBoxMin, uBoxMax;
+    ${floating ? 'uniform sampler2D tHeight; uniform float uWaveAmp;' + WAVES_GLSL : ''}`)
+    .replace('#include <project_vertex>', `
+      {
+        mat4 waterModel = modelMatrix;
+        #ifdef USE_INSTANCING
+          waterModel = modelMatrix * instanceMatrix;
+        #endif
+        vec3 wp = (waterModel * vec4(transformed, 1.0)).xyz;
+        vec2 extent = uBoxMax.xz - uBoxMin.xz;
+        vec3 push = vec3(0.35 * sin(wp.z / extent.y * 6.283 + uTime * 0.23) + 0.12,
+          0.0, 0.22 * cos(wp.x / extent.x * 6.283 + uTime * 0.19)) * uFlow;
+        for (int i = 0; i < 8; i++) {
+          vec3 delta = wp - uWake[i].xyz;
+          float radius = max(1.0, uWake[i].w);
+          float influence = exp(-dot(delta, delta) / (radius * radius));
+          push += uWakeVelocity[i] * influence * 0.055;
+        }
+        push *= clamp(${weight}, 0.0, 1.0);
+        ${floating ? 'push.y += (texture2D(tHeight, (wp.xz - uBoxMin.xz) / extent).r + baseWaves(wp.xz, uTime, uWaveAmp).x) * 0.85;' : ''}
+        transformed += vec3(dot(push, waterModel[0].xyz) / max(dot(waterModel[0].xyz, waterModel[0].xyz), 0.0001),
+          dot(push, waterModel[1].xyz) / max(dot(waterModel[1].xyz, waterModel[1].xyz), 0.0001),
+          dot(push, waterModel[2].xyz) / max(dot(waterModel[2].xyz, waterModel[2].xyz), 0.0001));
+      }
+      #include <project_vertex>`);
+}
 
 export const WATER_GLSL = /* glsl */ `
 uniform float uTime;
@@ -275,21 +319,21 @@ export function createWaterSurface(refl) {
           vec3 R = reflect(-V, n);
           // basit oda yansıması: üstte lamba şeridi, çevrede loş oda
           vec3 env = mix(vec3(0.03, 0.028, 0.025), vec3(0.09, 0.08, 0.07), R.y);
-          float strip = smoothstep(0.92, 0.99, R.y) * smoothstep(0.35, 0.05, abs(R.z));
+          float strip = smoothstep(0.92, 0.99, R.y) * (1.0 - smoothstep(0.05, 0.35, abs(R.z)));
           env += lamp * strip * 2.0;
           env = mix(env, mirror, uReflOn);
           vec3 H = normalize(V + vec3(0.0, 1.0, 0.15));
           float spec = pow(max(dot(n, H), 0.0), 220.0) * uLamp * 2.0;
           vec3 col = env * fres + spec * uLampColor;
           float a = clamp(fres * 0.9 + 0.08 + spec, 0.0, 1.0);
-          gl_FragColor = vec4(col, a);
+          gl_FragColor = vec4(col / max(a, 0.0001), a);
         } else {
           // Alttan: kritik açının dışında tam iç yansıma (ayna gibi parlak yüzey)
           vec3 nd = -n;
           float c = abs(dot(V, nd));
           float crit = 0.66; // cos(48.6°)
           vec3 under = waterInscatter() * 2.2;
-          float tir = smoothstep(crit + 0.05, crit - 0.05, c);
+          float tir = (1.0 - smoothstep(crit - 0.05, crit + 0.05, c));
           float sparkle = pow(max(0.0, 1.0 - length(g) * 6.0), 6.0);
           vec3 window = lamp * (0.65 + sparkle * 0.6);
           vec3 inside = mix(under, mirror * vec3(0.92, 0.97, 0.98), uReflOn) + lamp * 0.08 * sparkle;
