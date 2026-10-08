@@ -18,7 +18,7 @@ export function setEnclosure(t) {
 export function setTank(key) {
   if (!TANKS[key]) key = 'nano';
   const t = TANKS[key];
-  Object.assign(TANK, { key, w: t.w, h: t.h, d: t.d, water: t.water, cap: t.cap });
+  Object.assign(TANK, { key, w: t.w, h: t.h, d: t.d, water: t.water, waterFull: t.water, cap: t.cap });
   // Nano tanka göre su hacmi oranı: büyük tankta atık daha çok seyrelir
   TANK.vol = (t.w * t.d * t.water) / (60 * 30 * 33);
   // Dekor yerleşimi nano tanka göre tasarlandı; büyük tanklarda bu oranlarla yayılır

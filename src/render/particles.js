@@ -141,7 +141,6 @@ export function createBubbles(source, max = MOBILE ? 360 : 640) {
 
   const parts = [];
   let acc = 0;
-  const top = TANK.water;
   pts.userData.enabled = true;
   pts.userData.onPop = null;
   // Piksel boyutu o an çizilen hedefe göre (ana görüntü, yansıma, ayna)
@@ -187,6 +186,7 @@ export function createBubbles(source, max = MOBILE ? 360 : 640) {
       b.vx *= 1 - dt * 1.4; b.vz *= 1 - dt * 1.4;
       b.x += (b.vx + Math.cos(b.ph) * b.zig + flowX) * dt;
       b.z += (b.vz + Math.sin(b.ph * 0.7) * b.zig * 0.5) * dt;
+      const top = TANK.water;               // su değişiminde seviye değişir
       if (b.y > top - b.r * 0.5) {
         if (b.r > 0.055 && rnd() < 0.75) {
           b.surf = true;

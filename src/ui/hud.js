@@ -74,13 +74,12 @@ export function createHUD(game, root, sound) {
   dock.appendChild(tools);
   root.appendChild(dock);
 
+  // Su değişimi sırasında küçük ilerleme şeridi (tankı kapatmaz)
   const waterPop = h(`
-    <div class="pop glass water-pop hidden">
-      <div class="poptitle">Kısmi su değişimi</div>
-      <div class="popdesc">Hortumla eski suyu çek, temiz su ekle. Atık ve nitrat azalır.</div>
-      <input type="range" min="10" max="50" step="5" value="25" />
-      <div class="poprow"><span class="pct">%25</span><span class="hint ok">İdeal aralık</span></div>
-      <button class="primary">Değiştir</button>
+    <div class="wc-chip glass hidden">
+      <div class="wc-text"><b class="wc-title"></b><span class="wc-desc"></span></div>
+      <div class="wc-bar"><i></i><s></s></div>
+      <button class="primary wc-next"></button>
     </div>`);
   root.appendChild(waterPop);
 
@@ -150,22 +149,29 @@ export function createHUD(game, root, sound) {
     waterPop.classList.add('hidden');
   }));
   tools.querySelector('[data-act="water"]').addEventListener('click', () => {
-    waterPop.classList.toggle('hidden');
     shop.classList.add('hidden');
+    game.startWaterChange();
   });
-  const range = waterPop.querySelector('input');
-  const syncRange = () => {
-    const v = +range.value;
-    waterPop.querySelector('.pct').textContent = `%${v}`;
-    const hint = waterPop.querySelector('.hint');
-    hint.textContent = v <= 30 ? 'İdeal aralık' : 'Ani değişim stres yaratır';
-    hint.className = 'hint ' + (v <= 30 ? 'ok' : 'warn');
+  waterPop.querySelector('.wc-next').addEventListener('click', () => {
+    if (game.wc?.phase === 'siphon') game.toRefill();
+  });
+  const syncWater = () => {
+    const wc = game.wc;
+    waterPop.classList.toggle('hidden', !wc);
+    if (!wc) return;
+    const drained = (wc.full - wc.min) / wc.full;
+    const now = (wc.full - game.levelNow()) / wc.full;
+    const siphon = wc.phase === 'siphon';
+    waterPop.querySelector('.wc-title').textContent = siphon ? `Sifon · %${Math.round(drained * 100)}` : `Doldur · %${Math.round((1 - now / Math.max(drained, 0.001)) * 100)}`;
+    waterPop.querySelector('.wc-desc').textContent = siphon
+      ? (drained > 0.3 ? 'Yeterli. %30 üstü stres yapar.' : 'Kumda gezdir, basılı tut.')
+      : 'Sürahiyi tut, basılı tutarak dök.';
+    waterPop.querySelector('.wc-bar i').style.width = `${Math.min(100, drained * 200)}%`;
+    waterPop.querySelector('.wc-bar s').style.left = '60%';
+    const btn = waterPop.querySelector('.wc-next');
+    btn.textContent = 'Doldur';
+    btn.classList.toggle('hidden', !siphon);
   };
-  range.addEventListener('input', syncRange);
-  waterPop.querySelector('.primary').addEventListener('click', () => {
-    game.doWaterChange(+range.value / 100);
-    waterPop.classList.add('hidden');
-  });
   tools.querySelector('[data-act="air"]').addEventListener('click', () => {
     game.state.airstone = !game.state.airstone;
     game.toast(game.state.airstone ? 'Hava taşı açıldı.' : 'Hava taşı kapatıldı. Oksijen yavaşça düşebilir.');
@@ -364,6 +370,7 @@ export function createHUD(game, root, sound) {
   let acc = 0;
   return {
     update(dt) {
+      syncWater();
       acc += dt;
       if (acc < 0.2) return;
       acc = 0;

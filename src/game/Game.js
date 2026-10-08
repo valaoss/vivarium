@@ -10,6 +10,7 @@ import { createDust, createBubbles, createFoodMesh } from '../render/particles.j
 import { createPostFX } from '../render/postfx.js';
 import { createSubstrate, sandHeight } from '../world/substrate.js';
 import { createFeeder } from '../world/feeder.js';
+import { createSiphon, createJug } from '../world/waterChange.js';
 import { createPlants, PLANT_TYPES } from '../world/plants.js';
 import { SPECIES, NAMES, levelFromXp, xpForLevel } from '../creatures/species.js';
 import { Fish } from '../creatures/Fish.js';
@@ -40,12 +41,14 @@ export class Game {
 
     this.waterSim = new WaterSim(this.renderer);
     this.waterSim.sources.filter = this.substrate.equipment.filterOut;
-    this.scene.add(createWaterVolume());
+    this.waterVolume = createWaterVolume();
+    this.scene.add(this.waterVolume);
     this.reflection = new PlanarReflection(this.renderer, this.scene, TANK.water, { scale: MOBILE ? 0.3 : 0.4 });
     if (location.search.includes('norefl')) this.reflection.uniforms.uReflOn.value = 0;
     this.surface = createWaterSurface(this.reflection);
     this.scene.add(this.surface);
     const meniscus = createMeniscus();
+    this.meniscus = meniscus;
     this.scene.add(meniscus);
     this.godrays = createGodRays();
     this.scene.add(this.godrays);
@@ -58,6 +61,10 @@ export class Game {
     this.scene.add(this.foodMesh);
     this.feeder = createFeeder();
     this.scene.add(this.feeder.group);
+    this.siphon = createSiphon(this.room.floorY);
+    this.scene.add(this.siphon.group);
+    this.jug = createJug();
+    this.scene.add(this.jug.group);
 
     // Bitki yerleştirme önizleme halkası
     this.ghost = new THREE.Mesh(
@@ -464,6 +471,115 @@ export class Game {
     );
     if (first) this.feeder.group.position.copy(this.feederTarget);
   }
+  // ------------------------------------------------------------ Su değişimi (sifon + dolum)
+  startWaterChange() {
+    if (this.wc) return;
+    this.wc = { phase: 'siphon', full: TANK.waterFull, min: TANK.waterFull, cleaned: 0 };
+    this.siphon.setPose(0, HALF_D * 0.3);
+    this.setMode('siphon');
+  }
+  toRefill() {
+    if (!this.wc || this.wc.phase !== 'siphon') return;
+    if (this.wc.full - TANK.water < 0.3) { this.wc = null; this.setMode('view'); return; }   // hiç su çekilmediyse iptal
+    this.wc.phase = 'refill';
+    this.jug.setFill(1);
+    this.jugPos = null;
+    this.setMode('refill');
+  }
+  siphonAt(e) {
+    this.rayFromEvent(e);
+    const h = _ray.intersectObject(this.substrate.sand, false)[0];
+    if (!h) return;
+    const x = THREE.MathUtils.clamp(h.point.x, -HALF_W + 2.6, HALF_W - 2.6), z = THREE.MathUtils.clamp(h.point.z, -HALF_D + 2.6, HALF_D - 2.6);
+    // borunun ağzı taşın, kökün ya da bitki gövdesinin içine giremez
+    for (const o of this.allObstacles()) {
+      if (o.pos.y - sandHeight(x, z) > (o.h ?? o.core ?? o.r) + 3) continue;
+      if (Math.hypot(x - o.pos.x, z - o.pos.z) < (o.core ?? o.r * 0.75) + 1.8) return;
+    }
+    this.siphon.setPose(x, z);
+  }
+  jugAt(e) {
+    const ray = this.rayFromEvent(e);
+    _plane.set(new THREE.Vector3(0, 1, 0), -(TANK.h + 9));
+    if (!ray.intersectPlane(_plane, _hit)) return;
+    this.jugPos = new THREE.Vector3(THREE.MathUtils.clamp(_hit.x, -HALF_W + 7, HALF_W - 7), TANK.h + 9, THREE.MathUtils.clamp(_hit.z, Math.min(5.5 + 7, HALF_D - 6), HALF_D - 6));
+  }
+  levelNow() { return TANK.water; }
+  setWaterLevel(y) {
+    const full = TANK.waterFull;
+    TANK.water = y;
+    WU.uBoxMax.value.y = y;
+    this.waterVolume.scale.y = y / full;
+    this.surface.position.y = y - full;
+    this.meniscus.position.y = y - full;
+    this.godrays.position.y = y - full;
+    this.reflection.height = y;
+    for (const p of this.plants.plants) if (p.type === 'frogbit' && p.model) { p.y = y + 0.04; p.model.position.y = p.y; }
+    for (const f of this.food) if (f.state === 'float') f.pos.y = y - 0.05;
+  }
+  updateWaterChange(dt) {
+    const wc = this.wc;
+    if (!wc) return;
+    if (wc.phase === 'siphon') {
+      const tip = this.siphon.tip;
+      let dirt = 0;
+      if (this.siphonFlow) {
+        // ağız altındaki tortu ve dibe çökmüş yem çekilir
+        for (const f of this.food) {
+          if (f.state !== 'settled' || f.eaten) continue;
+          const d = Math.hypot(f.pos.x - tip.x, f.pos.z - tip.z);
+          if (d < 3) { dirt += 0.4; f.pos.lerp(tip, Math.min(1, dt * 6)); if (d < 0.6) { f.eaten = true; wc.cleaned++; } }
+        }
+        dirt = Math.min(1, dirt + this.state.water.waste / 60);
+        this.state.water.waste = Math.max(0, this.state.water.waste - dt * 0.4 * (0.3 + dirt));
+        const lvl = TANK.water - dt * 0.3;
+        if (lvl <= wc.full * 0.5) {
+          this.siphonFlow = false;
+          this.toast('Suyun yarısından fazlasını değiştirmek balıkları şoka sokar. Şimdi doldurma zamanı.', 'warn');
+          this.toRefill();
+        } else this.setWaterLevel(lvl);
+        wc.min = Math.min(wc.min, TANK.water);
+        for (const c of this.creatures) if (c.pos.distanceTo(tip) < 5 && Math.random() < dt * 2) c.scare?.(tip, 0.25);
+      }
+      if (this.wc?.phase === 'siphon') this.siphon.update(dt, this.siphonFlow, dirt, (wc.full - TANK.water) / (wc.full * 0.5));
+    } else {
+      if (this.jugPos) this.jug.group.position.lerp(this.jugPos, Math.min(1, dt * 10));
+      else this.jug.group.position.set(0, TANK.h + 9, Math.min(5.5 + 7, HALF_D - 6));
+      const out = this.jug.update(dt, TANK.water, this.time);
+      if (out) {
+        const lvl = Math.min(wc.full, TANK.water + dt * 0.45);
+        this.setWaterLevel(lvl);
+        this.jug.setFill(1 - (lvl - wc.min) / Math.max(0.01, wc.full - wc.min));
+        // akıntı yüzeyi döver; yakındaki balıklar akıntıdan uzaklaşır
+        this.waterSim.drop(out.x, out.z, 1.2, 0.05);
+        // akıntı yüzen bitkileri iter (sütun yaprağın içinden geçmez)
+        for (const p of this.plants.plants) {
+          if (p.type !== 'frogbit' || !p.model) continue;
+          const dx = p.x - out.x, dz = p.z - out.z, d = Math.hypot(dx, dz) || 0.01;
+          if (d < 7) {
+            const k = Math.min(1, dt * (7 - d) * 1.2) / d;
+            p.x = THREE.MathUtils.clamp(p.x + dx * k, -HALF_W + 4, HALF_W - 4);
+            p.z = THREE.MathUtils.clamp(p.z + dz * k, -HALF_D + 4, HALF_D - 4);
+            p.model.position.x = p.x; p.model.position.z = p.z;
+          }
+        }
+        for (const c of this.creatures) if (c.pos.distanceTo(out) < 9 && Math.random() < dt * 1.5) c.scare?.(new THREE.Vector3(out.x, TANK.water, out.z), 0.2);
+        if (lvl >= wc.full - 0.001) this.finishWaterChange();
+      }
+    }
+  }
+  finishWaterChange() {
+    const wc = this.wc;
+    const frac = (wc.full - wc.min) / wc.full;
+    this.wc = null;
+    this.jug.pouring = false;
+    this.setWaterLevel(wc.full);
+    this.setMode('view');
+    this.doWaterChange(frac);
+    if (wc.cleaned) this.toast(`Sifon dipten ${wc.cleaned} yem artığı ve tortu çekti.`, 'good');
+  }
+
+
   emitFlake(p) {
     if (this.food.length > 220) return;
     this.food.push({
@@ -728,8 +844,16 @@ export class Game {
   }
 
   setMode(m) {
+    if (this.wc && m !== this.wc.phase) {
+      this.toast(this.wc.phase === 'siphon' ? 'Önce sifonu bitirip tankı doldur.' : 'Önce tankı doldurmayı bitir.', 'warn');
+      m = this.wc.phase;
+    }
     this.mode = m;
-    this.controls.enabled = m !== 'wipe' && m !== 'feed';
+    this.siphon.group.visible = m === 'siphon';
+    this.jug.group.visible = m === 'refill';
+    this.jug.pouring = false;
+    this.siphonFlow = false;
+    this.controls.enabled = !['wipe', 'feed', 'siphon', 'refill'].includes(m);
     this.feeder.group.visible = m === 'feed';
     this.feeder.pouring = false;
     if (m === 'feed' && !this.feederPlaced) this.moveFeeder(0, HALF_D);
@@ -848,10 +972,14 @@ export class Game {
       down = { x: e.clientX, y: e.clientY };
       if (this.mode === 'wipe') { wiping = true; this.canvas.style.cursor = 'grabbing'; this.wipeAt(this.rayFromEvent(e)); }
       if (this.mode === 'feed') { this.feederAt(e); this.feeder.pouring = true; this.pourLanded = false; this.canvas.setPointerCapture?.(e.pointerId); }
+      if (this.mode === 'siphon') { this.siphonAt(e); this.siphonFlow = true; this.canvas.setPointerCapture?.(e.pointerId); }
+      if (this.mode === 'refill') { this.jugAt(e); this.jug.pouring = true; this.canvas.setPointerCapture?.(e.pointerId); }
     });
     this.canvas.addEventListener('pointermove', (e) => {
       if (wiping) { this.wipeAt(this.rayFromEvent(e)); this.wiping = true; clearTimeout(this.wipeStop); this.wipeStop = setTimeout(() => { this.wiping = false; }, 90); }
       if (this.mode === 'feed') this.feederAt(e);
+      if (this.mode === 'siphon') this.siphonAt(e);
+      if (this.mode === 'refill') this.jugAt(e);
       if (this.mode.startsWith('plant:')) {
         this.rayFromEvent(e);
         const h = _ray.intersectObject(this.substrate.sand, false)[0];
@@ -865,6 +993,8 @@ export class Game {
     window.addEventListener('pointerup', (e) => {
       if (wiping) { wiping = false; this.wiping = false; this.canvas.style.cursor = 'grab'; }
       this.feeder.pouring = false;
+      this.siphonFlow = false;
+      this.jug.pouring = false;
       if (!down || e.target !== this.canvas) { down = null; return; }
       const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y);
       down = null;
@@ -879,7 +1009,7 @@ export class Game {
 
   click(e) {
     const ray = this.rayFromEvent(e);
-    if (this.mode === 'feed') return;
+    if (['feed', 'siphon', 'refill'].includes(this.mode)) return;
     if (this.mode.startsWith('plant:')) {
       const type = this.mode.slice(6);
       const h = _ray.intersectObject(this.substrate.sand, false)[0];
@@ -979,6 +1109,7 @@ export class Game {
     };
     for (const c of this.creatures) c.update(bdt, world);
     this.updateFood(bdt, dtMin);
+    this.updateWaterChange(dt);
     if (this.feeder.group.visible) {
       // el imleci takip eder ama ani sıçramaz
       this.feeder.group.position.lerp(this.feederTarget, Math.min(1, dt * 14));

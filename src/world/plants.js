@@ -301,7 +301,7 @@ export function createPlants(scene) {
       q.setFromEuler(e);
       pos.set(plant.x + leaf.ox, plant.y + leaf.oy, plant.z + leaf.oz);
       // yaprak su yüzeyini delmesin
-      const len = Math.min(leaf.len * (0.35 + 0.65 * g), TANK.water - 0.8 - plant.y - leaf.oy);
+      const len = Math.min(leaf.len * (0.35 + 0.65 * g), TANK.waterFull - 0.8 - plant.y - leaf.oy);
       scl.set(leaf.wid * (0.6 + 0.4 * g) * (plant.type === 'vallisneria' ? 1 : len), len, plant.type === 'vallisneria' ? 1 : len);
       m4.compose(pos, q, scl);
       pool.mesh.setMatrixAt(leaf.i, m4);
@@ -393,7 +393,7 @@ export function createPlants(scene) {
     _box.setFromObject(m);
     let capK = 1;
     if (plant.type !== 'frogbit') {
-      const top = TANK.water - 0.8;
+      const top = TANK.waterFull - 0.8;
       if (_box.max.y > top) {
         capK = Math.max(0.2, (top - plant.y) / (_box.max.y - plant.y));
         m.scale.multiplyScalar(capK);
