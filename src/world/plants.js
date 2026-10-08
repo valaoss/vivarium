@@ -3,11 +3,28 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { patchUnderwater } from '../render/water.js';
 import { mulberry } from '../render/textures.js';
 import { sandHeight } from './substrate.js';
+import { buildFrogbit, buildLudwigia } from './proceduralPlants.js';
+import { TANK } from '../config.js';
 
 export const PLANT_TYPES = {
   vallisneria: { name: 'Vallisneria', price: 6, desc: 'Uzun, şerit yapraklı çim bitkisi. Hızlı büyür, suyu temizler.', o2: 1.2, uptake: 1.3 },
   javafern: { name: 'Java eğrelti otu', price: 10, desc: 'Dayanıklı, mızrak yapraklı. Kök ve taşa tutunur.', o2: 0.8, uptake: 0.8 },
   anubias: { name: 'Anubias', price: 12, desc: 'Koyu ve parlak yapraklı, çok yavaş büyür, neredeyse ölümsüz.', o2: 0.6, uptake: 0.5 },
+  crypt: { name: 'Kriptokorin', latin: 'Cryptocoryne wendtii', price: 9, level: 2, desc: 'Dalgalı kenarlı, kahve-yeşil yapraklı rozet. Gölgeyi sever, ön-orta plan için ideal.', o2: 0.7, uptake: 0.7 },
+  ludwigia: { name: 'Ludwigia', latin: 'Ludwigia repens', price: 8, desc: 'Karşılıklı oval yapraklı gövde bitkisi; güçlü ışıkta tepeleri bakır-kırmızıya döner.', o2: 1.0, uptake: 1.2 },
+  frogbit: { name: 'Amazon frogbit', latin: 'Limnobium laevigatum', price: 7, desc: 'Yüzen yuvarlak yapraklar ve sarkan tüylü kökler. Gölge yapar, nitratı hızla çeker.', o2: 0.5, uptake: 1.5 },
+  sword: { name: 'Amazon kılıcı', latin: 'Echinodorus bleheri', price: 14, level: 3, desc: 'Geniş mızrak yapraklı iri rozet. Arka planda gösterişli bir odak noktası olur.', o2: 1.1, uptake: 1.1 },
+};
+
+// Prosedürel modelli bitkiler
+const PROC_PLANTS = { frogbit: buildFrogbit, ludwigia: buildLudwigia };
+
+// Gerçek modelli bitkiler: dosya ve tam boyda yükseklik (cm)
+const MODEL_PLANTS = {
+  anubias: { url: 'models/decor/anubias.glb', size: 9, tint: [0.5, 0.62, 0.42] },
+  javafern: { url: 'models/plants/javafern.glb', size: 15, tint: [0.62, 0.78, 0.5] },
+  crypt: { url: 'models/plants/crypt.glb', size: 11, tint: [0.7, 0.52, 0.3], under: [1.15, 0.55, 0.5] },
+  sword: { url: 'models/plants/sword.glb', size: 26, tint: [0.85, 0.95, 0.7] },
 };
 
 // --- Yaprak geometrileri (yerel uzay: taban orijinde, yaprak +Y yönünde uzar) ---
@@ -145,11 +162,14 @@ function gltfPlantShader(shader) {
   shader.fragmentShader = shader.fragmentShader
     .replace('#include <common>', `#include <common>
       uniform float uHealth;
+      uniform vec3 uUnder;
       float gh21(vec2 p) { return fract(sin(dot(p, vec2(41.3, 289.1))) * 17853.3); }
       float gnoise(vec2 p) { vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f);
         return mix(mix(gh21(i), gh21(i+vec2(1,0)), f.x), mix(gh21(i+vec2(0,1)), gh21(i+vec2(1,1)), f.x), f.y); }`)
     .replace('#include <color_fragment>', `#include <color_fragment>
       {
+        // yaprak alt yüzü (kriptokorinde kızıl-kahve)
+        if (!gl_FrontFacing) diffuseColor.rgb *= uUnder;
         float sick = clamp(1.0 - uHealth, 0.0, 1.0);
         float spots = smoothstep(0.55, 0.75, gnoise(vWPos.xz * 2.5 + vWPos.y));
         diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.55, 0.48, 0.16), sick * (0.6 + spots * 0.4));
@@ -158,33 +178,37 @@ function gltfPlantShader(shader) {
       }`);
 }
 
-// Anubias (Pala_002, CC-BY): üç ayrı bitki; her biri yaprak malzemesine göre birkaç parça
-const anubiasModel = { proto: null, pending: [] };
-new GLTFLoader().load(`${import.meta.env.BASE_URL}models/decor/anubias.glb`, (gltf) => {
-  gltf.scene.updateMatrixWorld(true);
-  const variants = [];
-  for (const node of gltf.scene.children) {
-    const parts = [];
-    const box = new THREE.Box3();
-    node.traverse((o) => {
-      if (!o.isMesh) return;
-      const g = o.geometry.clone();
-      g.applyMatrix4(o.matrixWorld);
-      g.computeBoundingBox();
-      box.union(g.boundingBox);
-      parts.push({ geo: g, material: o.material });
-    });
-    if (!parts.length) continue;
-    // tabanı 0'a, yüksekliği 1'e
-    const c = box.getCenter(new THREE.Vector3());
-    const h = box.max.y - box.min.y;
-    for (const p of parts) { p.geo.translate(-c.x, -box.min.y, -c.z); p.geo.scale(1 / h, 1 / h, 1 / h); }
-    variants.push(parts);
-  }
-  anubiasModel.proto = { variants };
-  for (const fn of anubiasModel.pending) fn();
-  anubiasModel.pending.length = 0;
-});
+// Model bitkiler (Anubias: Pala_002, diğerleri: Nullified, CC-BY). Sahnenin her çocuğu bir varyant.
+const models = Object.fromEntries(Object.keys(MODEL_PLANTS).map((k) => [k, { proto: null, pending: [] }]));
+for (const [key, def] of Object.entries(MODEL_PLANTS)) {
+  new GLTFLoader().load(`${import.meta.env.BASE_URL}${def.url}`, (gltf) => {
+    gltf.scene.updateMatrixWorld(true);
+    const variants = [];
+    const roots = gltf.scene.children.length > 1 ? gltf.scene.children : [gltf.scene];
+    for (const node of roots) {
+      const parts = [];
+      const box = new THREE.Box3();
+      node.traverse((o) => {
+        if (!o.isMesh) return;
+        const g = o.geometry.clone();
+        g.applyMatrix4(o.matrixWorld);
+        g.computeBoundingBox();
+        box.union(g.boundingBox);
+        parts.push({ geo: g, material: o.material });
+      });
+      if (!parts.length) continue;
+      // tabanı 0'a, yüksekliği 1'e
+      const c = box.getCenter(new THREE.Vector3());
+      const h = box.max.y - box.min.y;
+      for (const p of parts) { p.geo.translate(-c.x, -box.min.y, -c.z); p.geo.scale(1 / h, 1 / h, 1 / h); }
+      variants.push(parts);
+    }
+    const m = models[key];
+    m.proto = { variants };
+    for (const fn of m.pending) fn();
+    m.pending.length = 0;
+  });
+}
 
 class LeafPool {
   constructor(geo, mat, cap) {
@@ -217,7 +241,6 @@ export function createPlants(scene) {
   const group = new THREE.Group();
   const pools = {
     vallisneria: new LeafPool(ribbonGeometry(), makeMaterial('ribbon', { color: 0x6aa83e, roughness: 0.55 }, { tBlade: { value: bladeTexture() } }), 600),
-    javafern: new LeafPool(lanceGeometry({ width: 0.15, petiole: 0.12, fold: 0.35 }), makeMaterial('fern', { color: 0x2f5a22, roughness: 0.5 }), 400),
   };
   for (const p of Object.values(pools)) group.add(p.mesh);
 
@@ -230,16 +253,18 @@ export function createPlants(scene) {
   const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), pos = new THREE.Vector3(), scl = new THREE.Vector3();
   const col = new THREE.Color();
 
-  function buildAnubias(plant) {
-    const { variants } = anubiasModel.proto;
+  function buildModel(plant) {
+    const { variants } = models[plant.type].proto;
     const r = mulberry(plant.seed + 7);
-    const uni = { uHealth: plant.uHealth, uPhase: { value: r() * 6.28 } };
+    const uni = { uHealth: plant.uHealth, uPhase: { value: r() * 6.28 }, uUnder: { value: new THREE.Color(...(MODEL_PLANTS[plant.type].under ?? [1, 1, 1])) } };
     const root = new THREE.Group();
     for (const part of variants[Math.floor(r() * variants.length)]) {
       const m = part.material.clone();
       m.side = THREE.DoubleSide;
       m.alphaTest = 0.5;
       m.transparent = false;
+      const def = MODEL_PLANTS[plant.type];
+      if (def.tint) m.color.setRGB(...def.tint).multiplyScalar(0.9 + r() * 0.2);
       patchUnderwater(m, { key: 'gltf-plant', extra: gltfPlantShader, uniforms: uni });
       const mesh = new THREE.Mesh(part.geo, m);
       mesh.castShadow = true;
@@ -254,10 +279,10 @@ export function createPlants(scene) {
   }
 
   function layout(plant) {
-    if (plant.type === 'anubias') {
+    if (MODEL_PLANTS[plant.type] || PROC_PLANTS[plant.type]) {
       plant.uHealth.value = plant.health;
       if (plant.model) {
-        plant.model.scale.setScalar(9 * (0.55 + 0.45 * plant.growth));
+        plant.model.scale.setScalar((MODEL_PLANTS[plant.type]?.size ?? 1) * (0.55 + 0.45 * plant.growth));
         plant.model.position.set(plant.x, plant.y, plant.z);
       }
       return;
@@ -286,9 +311,30 @@ export function createPlants(scene) {
     const pool = pools[type];
     const base = y ?? sandHeight(x, z) - 0.3;
     const plant = { id: seed, type, x, z, y: base, growth, health, seed, leaves: [], extra: [] };
-    if (type === 'anubias') {
+    if (PROC_PLANTS[type]) {
+      if (type === 'frogbit') plant.y = TANK.water + 0.04;
       plant.uHealth = { value: health };
-      if (anubiasModel.proto) buildAnubias(plant); else anubiasModel.pending.push(() => buildAnubias(plant));
+      const uni = { uHealth: plant.uHealth, uPhase: { value: r() * 6.28 } };
+      plant.model = PROC_PLANTS[type](seed, uni);
+      plant.model.rotation.y = r() * Math.PI * 2;
+      group.add(plant.model);
+      plant.extra.push(plant.model);
+      layout(plant);
+      plants.push(plant);
+      return plant;
+    }
+    if (MODEL_PLANTS[type]) {
+      plant.uHealth = { value: health };
+      if (type === 'javafern') {
+        // tutunduğu kök/taş üzerinde sürünen rizom
+        const rh = new THREE.Mesh(rhizomeGeo, rhizomeMat);
+        rh.position.set(x, base + 0.25, z);
+        rh.rotation.y = r() * Math.PI;
+        rh.castShadow = true;
+        group.add(rh);
+        plant.extra.push(rh);
+      }
+      if (models[type].proto) buildModel(plant); else models[type].pending.push(() => buildModel(plant));
       plants.push(plant);
       return plant;
     }
@@ -322,14 +368,6 @@ export function createPlants(scene) {
     plant.leaves = plant.leaves.filter((l) => l.i >= 0);
     if (pool.mesh.instanceColor) pool.mesh.instanceColor.needsUpdate = true;
 
-    if (type === 'javafern') {
-      const rh = new THREE.Mesh(rhizomeGeo, rhizomeMat);
-      rh.position.set(x, base + 0.25, z);
-      rh.rotation.y = r() * Math.PI;
-      rh.castShadow = true;
-      group.add(rh);
-      plant.extra.push(rh);
-    }
     layout(plant);
     plants.push(plant);
     return plant;

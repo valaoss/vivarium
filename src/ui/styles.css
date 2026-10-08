@@ -152,6 +152,8 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .sw-vallisneria { background: repeating-linear-gradient(80deg, #6aa645 0 4px, #4e8a33 4px 8px); }
 .sw-javafern { background: radial-gradient(ellipse at 50% 80%, #3c6e2a, #1e3a16); }
 .sw-anubias { background: radial-gradient(circle at 45% 40%, #2f6326, #10240d); }
+.sw-crypt { background: radial-gradient(ellipse at 50% 75%, #6b7a3a, #3a3a1c 70%); }
+.sw-sword { background: linear-gradient(160deg, #7cbf4a, #2f6a24); }
 
 /* ---------- Canlı kartı ---------- */
 .card { position: absolute; left: var(--gap); top: 160px; width: 300px; padding: 18px; font-size: 13px; background: var(--surface-strong); animation: rise-l 0.45s var(--spring); }

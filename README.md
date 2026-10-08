@@ -29,6 +29,8 @@ Kaydı sıfırlamak için tarayıcı konsolunda `vivarium.reset()`. Su yüzeyi y
 
 ## Türler ve ilerleme
 
+Bitkiler: vallisneria, java eğreltisi, anubias, kriptokorin, Amazon kılıcı, Ludwigia (prosedürel, kızıl tepeli) ve yüzen Amazon frogbit (prosedürel, sarkan kökleriyle).
+
 8 tür var: lepistes, neon tetra, corydoras, red cherry karides, nerit salyangoz, zebra danio, beta ve melek balığı. Yeni türler **Doğa Seviyesi** ile açılır (görev, gözlem ve sağlıklı tank deneyim kazandırır). Dükkân uyumsuz türler için uyarır: beta lepisteslere ve başka betalara saldırır, melek balığı neon ve karides avlar. Stresli balıklarda beyaz benek hastalığı çıkabilir; bilgi kartından tedavi edilir.
 
 ## Dokular
@@ -41,6 +43,7 @@ Kaydı sıfırlamak için tarayıcı konsolunda `vivarium.reset()`. Su yüzeyi y
 - Lepistes (erkek): "[Guppy Fish](https://sketchfab.com/3d-models/21e14e4b961e406385539f79eacdb1dc)" — BlueMesh, CC-BY 4.0
 - Lepistes (dişi): "[Guppy ♀](https://sketchfab.com/3d-models/feab250d4ab544de8eb7fda9fc1c2978)" — Nestaeric, CC-BY 4.0
 - Beta: "[Betta Splendens](https://sketchfab.com/3d-models/f4eeb7f50ad24873842bd954ad27d23b)" — BlueMesh, CC-BY 4.0
+- Java eğreltisi, kriptokorin ve Amazon kılıcı: "[Aquariumplants (Java Fern, Vallisneria etc)](https://sketchfab.com/3d-models/f34fac656a364f8eaeab0918179d6df6)" — [Nullified](https://sketchfab.com/Nullifiedit), CC-BY 4.0 (parçalara ayrıldı, sadeleştirildi ve tür renklerine boyandı)
 - Anubias: "[Plants Anubias](https://sketchfab.com/3d-models/2ba1d06a191b437e848b81b2981a9e02)" — Pala_002, CC-BY 4.0
 - Otocinclus (gövde): "[Hypostomus / Coroncoro](https://sketchfab.com/3d-models/3c4466d5f0ce4b2e81a692ba89807ced)" — alzarac, CC-BY 4.0 (otocinclus deseniyle)
 - Nerit kabuğu: "[Black and White Nerite Shell](https://sketchfab.com/3d-models/c3b2ba55a35946608814d0db896cbe58)" — RISD Nature Lab, CC-BY 4.0 (zebra nerit tonuyla)

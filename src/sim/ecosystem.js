@@ -68,7 +68,7 @@ export function tick(state, dtMin, ctx) {
 
   // Bitkiler
   for (const p of ctx.plants) {
-    const rate = p.type === 'vallisneria' ? 0.012 : p.type === 'javafern' ? 0.006 : 0.003;
+    const rate = { vallisneria: 0.012, sword: 0.008, javafern: 0.006, crypt: 0.005 }[p.type] ?? 0.003;
     if (light > 0.5 && p.health > 0.5) p.growth = Math.min(1.25, p.growth + rate * h * p.health * (w.nitrate > 2 ? 1 : 0.4));
     const target = clamp(1 - Math.max(0, w.algae - 45) / 70 - (w.nitrate < 1 ? 0.2 : 0) - (q < 40 ? 0.3 : 0), 0.15, 1);
     p.health += (target - p.health) * (1 - Math.exp(-0.05 * h));
