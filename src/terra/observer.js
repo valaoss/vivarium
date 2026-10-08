@@ -126,7 +126,7 @@ export function createObserver(terra, root, cfg) {
         feetI.setMatrixAt(i, new THREE.Matrix4().makeTranslation(f.pos.x, f.pos.y, f.pos.z));
         feetI.setColorAt(i, c.setHex(f.held > 0 ? 0xff7a6a : f.planted ? 0x7fe08a : 0xffe066));
       });
-      feetI.count = 8; feetI.instanceMatrix.needsUpdate = true; feetI.instanceColor.needsUpdate = true;
+      feetI.count = Math.min(8, sel.body.feet.length); feetI.instanceMatrix.needsUpdate = true; feetI.instanceColor.needsUpdate = true;
     } else feetI.count = 0;
     feetI.visible = !!sel.body?.feet;
     tgt.visible = !!sel.target?.pos;

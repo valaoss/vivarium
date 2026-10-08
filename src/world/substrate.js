@@ -199,7 +199,7 @@ function createRocks(group) {
     group.add(rock);
     obstacles.push({ pos: new THREE.Vector3(d.x, base + d.sy * 0.4, d.z), r: Math.max(d.sx, d.sz) * 1.05, core: Math.max(d.sx, d.sz) * 0.95, top: base + d.sy * 1.05, mesh: rock });
   }
-  loadScannedRocks(obstacles.map((o) => o.mesh));
+  obstacles.ready = loadScannedRocks(obstacles.map((o) => o.mesh));
   return obstacles;
 }
 
@@ -209,11 +209,11 @@ function loadScannedRocks(meshes) {
   const loader = new GLTFLoader();
   const names = ['rock_07', 'rock_09'];
   const loaded = {};
-  names.forEach((name) => {
+  return Promise.all(names.map((name) => new Promise((done) => {
     loader.load(`${base}${name}/${name}_1k.gltf`, (gltf) => {
       let src = null;
       gltf.scene.traverse((o) => { if (o.isMesh && !src) src = o; });
-      if (!src) return;
+      if (!src) { done(); return; }
       const geo = src.geometry.clone();
       geo.applyMatrix4(src.matrixWorld);
       // Birim kutuya oturt: x,z -1..1, taban -0.35, tepe 1.0 (prosedürel taşla aynı)
@@ -235,8 +235,9 @@ function loadScannedRocks(meshes) {
         mesh.geometry = geo;
         mesh.material = m;
       });
-    });
-  });
+      done();
+    }, undefined, () => done());
+  })));
 }
 
 // Dallanan kök (driftwood)

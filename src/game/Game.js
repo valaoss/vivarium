@@ -21,6 +21,7 @@ import { newWater, tick, quality, turbidity, waterChange } from '../sim/ecosyste
 import { QUESTS, currentQuest } from './quests.js';
 import { mulberry } from '../render/textures.js';
 import { Ecosystem } from '../eco/Ecosystem.js';
+import { bakeHeightfield } from '../terra/heightfield.js';
 import { createBubbleNest } from '../world/bubbleNest.js';
 
 const SAVE_KEY = 'vivarium.save.v1';
@@ -107,6 +108,9 @@ export class Game {
     this.listeners = {};
     this.school = Object.fromEntries(Object.entries(SPECIES).filter(([, sp]) => sp.depth).map(([k]) => [k, { target: new THREE.Vector3(0, 18, 0), timer: 0, excite: 0 }]));
     this.obstacles = [...this.substrate.rocks, ...this.substrate.wood, ...this.substrate.equipment.obstacles];
+    // dip yüzeyi: kum, çakıl, taş, kök ve ekipman yukarıdan çizilir; karides ve salyangoz bunun üstünde yürür
+    this.bakeGround();
+    this.substrate.rocks.ready?.then(() => this.bakeGround());
 
     this.algaeGrid = new Float32Array(ALGAE_GRID.w * ALGAE_GRID.h);
 
@@ -235,6 +239,11 @@ export class Game {
     this.pendingWelcome = `Sen yokken ${h ? h + ' saat ' : ''}${m} dakika geçti. Su kalitesi ${Math.round(before.q)} → ${Math.round(q)}, ${this.state.coins - before.coins} bakım parası kazandın.`;
   }
 
+  bakeGround() {
+    this.hf = bakeHeightfield(this.renderer, [this.substrate.group], { w: TANK.w, d: TANK.d, top: TANK.h, res: 0.15 });
+  }
+  ground(x, z) { return this.hf ? this.hf.at(x, z) : sandHeight(x, z); }
+
   // ---------------------------------------------------------------- Varlıklar
   // Sert dekor + bitki gövdeleri (balıklar yaprakların içinden geçmesin diye dikey silindirler)
   allObstacles() {
@@ -341,6 +350,15 @@ export class Game {
   }
 
   // Salyangozların camdaki yosunu kazıması
+  // ön camın iç yüzündeki yosun yoğunluğu (0..1)
+  glassAlgae(x, y) {
+    const u = (x + HALF_W + TANK.glass) / (TANK.w + 2 * TANK.glass);
+    const v = (y + TANK.glass) / (TANK.h + TANK.glass);
+    const xx = Math.floor(u * ALGAE_GRID.w), yy = Math.floor(v * ALGAE_GRID.h);
+    if (xx < 0 || yy < 0 || xx >= ALGAE_GRID.w || yy >= ALGAE_GRID.h) return 0;
+    return Math.min(1, this.algaeGrid[yy * ALGAE_GRID.w + xx]);
+  }
+
   cleanGlass(x, y, amount) {
     const u = (x + HALF_W + TANK.glass) / (TANK.w + 2 * TANK.glass);
     const v = (y + TANK.glass) / (TANK.h + TANK.glass);
@@ -1134,6 +1152,9 @@ export class Game {
       school: this.school,
       algae: w.algae / 100,
       cleanGlass: (x, y, a) => this.cleanGlass(x, y, a),
+      ground: this.groundFn ??= (x, z) => this.ground(x, z),
+      glassAlgae: this.glassAlgaeFn ??= (x, y) => this.glassAlgae(x, y),
+      hf: this.hf,
       hour: this.hour,
       turbidity: WU.uTurbidity.value,
       flow: this.state.airstone ? 0.7 : 0.25,
