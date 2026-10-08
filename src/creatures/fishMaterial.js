@@ -132,7 +132,7 @@ const BODY_COLOR = /* glsl */ `
       c = vec3(0.46, 0.37, 0.25);
       c = mix(c, vec3(0.3, 0.25, 0.16), smoothstep(0.3, 0.85, v));
       float flank = smoothstep(-0.6, -0.2, v) * smoothstep(0.8, 0.35, v) * smoothstep(0.12, 0.26, u);
-      vec3 metal = mix(vec3(0.5, 0.46, 0.28), vec3(0.3, 0.46, 0.36), pow(1.0 - facing, 1.5));
+      vec3 metal = mix(vec3(0.52, 0.45, 0.27), vec3(0.34, 0.42, 0.27), pow(1.0 - facing, 1.5));
       c = mix(c, metal, flank * 0.85);
       // iki sıra kemik plaka: dikey ek yerleri ve orta yatay dikiş
       float plates = band(fract(u * 16.0), 0.5, 0.05, 0.035) * flank;
@@ -310,7 +310,7 @@ export function makeFishMaterials(fishUniforms) {
     metalness: 0.05,
     clearcoat: 0.25,
     clearcoatRoughness: 0.35,
-    iridescence: fishUniforms.uPattern.value < 0.5 ? 0.35 : 0.2,
+    iridescence: fishUniforms.uPattern.value < 0.5 ? 0.35 : Math.abs(fishUniforms.uPattern.value - 2) < 0.5 ? 0.06 : 0.2,
     iridescenceIOR: 1.5,
     iridescenceThicknessRange: [250, 650],
     side: THREE.DoubleSide,
