@@ -14,7 +14,7 @@ export class Agent {
     this.isAgent = true;
     this.eco = eco;
     this.world = eco.world;
-    this.species = species;
+    this.speciesKey = species;
     this.rand = mulberry(Math.floor(seed));
     this.thinkInterval = thinkInterval;
     this.pos = new THREE.Vector3();

@@ -5,6 +5,9 @@ import { buildFish } from './fishGeometry.js';
 import { makeFishMaterials, makeFishUniforms } from './fishMaterial.js';
 import { makeRealFishMeshes, realModelKey, REAL_FISH, findMouth } from './realModels.js';
 import { sandHeight } from '../world/substrate.js';
+import { Agent } from '../eco/Agent.js';
+import { Brain } from '../eco/Brain.js';
+import { FISH_ACTIONS, FISH_PROFILES, zonePoint } from './fishBrain.js';
 
 const GEO_CACHE = {};
 const BETTA_PALETTES = [
@@ -31,10 +34,13 @@ export const STATE_LABEL = {
   wander: 'Dolaşıyor', school: 'Sürüyle yüzüyor', seek: 'Yem arıyor', eat: 'Yiyor', flee: 'Kaçıyor',
   sleep: 'Uyuyor', air: 'Yüzeyden hava alıyor', hide: 'Saklanıyor', forage: 'Kumu eşeliyor', curious: 'Seni izliyor', rest: 'Dinleniyor',
   chase: 'Rakibini kovalıyor', flare: 'Yüzgeçlerini açıp gösteriş yapıyor', hunt: 'Avlanıyor',
+  root: 'Kumu eşeliyor', graze: 'Yosun kazıyor', wait: 'Yem bekliyor', court: 'Kur yapıyor', nest: 'Köpük yuvası yapıyor',
 };
 
-export class Fish {
-  constructor(data) {
+export class Fish extends Agent {
+  constructor(data, eco) {
+    super(eco, { species: data.species, seed: (data.seed ?? Math.random() * 100) * 1e6 + (data.id ?? 0) % 1e6, thinkInterval: 0.3 });
+    this.kind = 'fish';
     this.data = data;                   // kaydedilen alanlar
     this.sp = SPECIES[data.species];
     const b = this.sp.body;
@@ -120,16 +126,147 @@ export class Fish {
     this.airTimer = 40 + Math.random() * 80;
     this.airPhase = 0;
     this.restTimer = 0;
-    this.aggroTimer = 3 + Math.random() * 5;
-    this.aggro = 0;
     this.prey = null;
-    this.pickTarget({ night: 0 });
+    // bağımsız ajan: tür profili, algı ve karar
+    this.prof = FISH_PROFILES[data.species] ?? {};
+    this.label = this.sp.name;
+    this.brain = new Brain(FISH_ACTIONS);
+    this.world = { night: 0, plants: [], fish: [], food: [], o2: 80, events: [], algae: 0, hour: 12 };
+    this.goal = zonePoint(this, new THREE.Vector3());
+    this.alarm = 0;
+    this.airNeed = Math.random();
+    this.mates = [];
+    this.food = null;
+    this.knownFood = new WeakSet();
+    if (data.feedSpot) this.remember('feedSpot', new THREE.Vector3(...data.feedSpot), 2, 8);
+    data.feedHours ??= new Array(24).fill(0);
+  }
+
+  get size() { return this.total; }
+  get speed() { return this.vel.length(); }
+  feedLocked() { const fe = this.feed; return !!fe && (fe.phase === 'hold' || fe.phase === 'spit' || fe.phase === 'strike'); }
+
+  // ---------------------------------------------------------------- algı (ışık, bulanıklık, yan çizgi, koku)
+  sense(dt) {
+    const w = this.world, sp = this.sp, P = this.prof, pos = this.pos;
+    this.forget(dt, 0.002);
+    const light = 1 - w.night * 0.78;
+    const clear = 1 - (w.turbidity ?? 0) * 0.6;
+    const R = Math.max(6, 32 * light * clear);
+    this.visR = R;
+    const seen = (p, r = R) => {
+      _v.subVectors(p, pos); const d = _v.length();
+      return d < r && (d < 2 || _v.dot(this.fwd) / d > -0.75);          // arkada küçük kör alan
+    };
+    // yan çizgi: yüzeye düşen yem / ani hareket
+    let cue = null;
+    for (const v of this.eco.vib) {
+      if (v.src === this || v.medium !== 'water' || this.eco.time - v.t > 0.8) continue;
+      const d = v.pos.distanceTo(pos);
+      if (v.amp * Math.exp(-d / 9) > 0.12) { cue = v.pos; if (v.kind === 'food') this.perceive(null, 'yan çizgi', v.pos, 0.6, { food: true }); }
+    }
+    // yem: görerek, dipte koklayarak, sürü arkadaşının yem kaptığını görerek
+    const mates = [];
+    for (const o of w.fish) {
+      if (o === this || o.species !== this.species || !o.pos) continue;
+      if (seen(o.pos, Math.min(R, 18))) mates.push(o);
+    }
+    this.mates = mates;
+    let best = null, bd = Infinity, how = '';
+    for (const f of w.food) {
+      if (f.eaten || (f.held && f.held !== this)) continue;
+      if (sp.bottom ? f.pos.y > sandHeight(f.pos.x, f.pos.z) + 8 : f.state === 'settled') continue;
+      const d = f.pos.distanceTo(pos);
+      let h = '';
+      if (P.bottomFeeder && f.state === 'settled' && d < 14) h = 'dipteki yemin kokusunu aldı';
+      else if (seen(f.pos, f.state === 'settled' ? R * 0.5 : R)) h = f.state === 'float' ? 'yüzeydeki pulu gördü' : 'batan yemi gördü';
+      else if (cue && f.pos.distanceTo(cue) < 6 && d < 22) h = 'suya düşen yemin titreşimini hissetti';
+      else if (mates.some((m) => (m.state === 'seek' || m.state === 'eat') && m.pos.distanceTo(f.pos) < 8)) h = 'sürü arkadaşının yem kaptığını gördü';
+      if (!h) continue;
+      const sc = d * (this.knownFood.has(f) ? 0.8 : 1);
+      if (sc < bd) { bd = sc; best = f; how = h; }
+    }
+    if (best && !this.knownFood.has(best)) {
+      this.knownFood.add(best);
+      if (best.age !== undefined && best.age < 20) this.learnFeeding(best.pos);
+    }
+    this.food = best ? { item: best, how } : null;
+    if (best) this.perceive(null, how.includes('koku') ? 'koku' : how.includes('titreşim') ? 'yan çizgi' : 'görme', best.pos, 0.9, { food: true, why: how });
+
+    // diğer balıklar: rakip, eş, av, tehdit
+    this.rival = null; this.mate = null; this.quarry = null; this.threat = null;
+    let rb = Infinity, mb = Infinity, qb = Infinity;
+    for (const o of w.fish) {
+      if (o === this || !o.sp || !seen(o.pos)) continue;
+      const d = o.pos.distanceTo(pos);
+      if (P.territorial && !(this.rivalCooldown > 0) && !o.data.fry && d < 12 && d < rb && (o.species === this.species && o.data.sex !== 'f' || ['guppy', 'gourami'].includes(o.species))) {
+        rb = d; this.rival = { e: o, pos: o.pos, conf: 1 - d / 14, why: 'rakip' };
+      }
+      if ((P.court || P.dawnChase) && this.data.sex === 'm' && !(this.courtCooldown > 0) && o.species === this.species && o.data.sex === 'f' && !o.data.fry && d < 15 && d < mb) {
+        mb = d; this.mate = { e: o, conf: 1 - d / 16 };
+      }
+      if (P.predator && (P.predator.prey.includes(o.species) || (o.data.fry && o.species !== this.species)) && o.total < this.total * (P.predator.ratio + 0.3) && d < 14 && d < qb) {
+        qb = d; this.quarry = { e: o, conf: 1 - d / 15 };
+      }
+      // küçük balık için: ağzına sığabileceği büyüklükte avcı yakında
+      const pp = FISH_PROFILES[o.species]?.predator;
+      if (pp && pp.prey.includes(this.species) && d < 10) {
+        const lvl = (1 - d / 10) * (o.state === 'hunt' ? 1 : 0.4);
+        if (lvl > this.alarm) { this.alarm = lvl; this.threat = { e: o, pos: o.pos, why: `${o.sp.name} yakında: avcı`, lvl }; }
+      }
+    }
+    // betanın aynası: aydınlıkta yan / ön cama yakın ve cama dönükken kendi yansımasını görür
+    if (P.mirror && !this.rival && !(this.rivalCooldown > 0) && light > 0.6) {
+      const gx = HALF_W - Math.abs(pos.x), gz = HALF_D - Math.abs(pos.z);
+      const toward = gx < gz ? Math.sign(pos.x) * this.fwd.x : Math.sign(pos.z) * this.fwd.z;
+      if (Math.min(gx, gz) < 6 && toward > 0.25) {
+        const mp = gx < gz ? new THREE.Vector3(Math.sign(pos.x) * HALF_W, pos.y, pos.z) : new THREE.Vector3(pos.x, pos.y, Math.sign(pos.z) * HALF_D);
+        this.rival = { e: this, pos: mp, conf: 0.8, mirror: true, why: 'yansıma' };
+      }
+    }
+    if (this.rival && !this.rival.mirror) this.perceive(this.rival.e, 'görme', this.rival.e.pos, this.rival.conf, {}).role = 'rakip';
+    if (this.mate) this.perceive(this.mate.e, 'görme', this.mate.e.pos, this.mate.conf, {}).role = 'eş';
+    if (this.quarry) this.perceive(this.quarry.e, 'görme', this.quarry.e.pos, this.quarry.conf, {}).role = 'av';
+    if (this.threat) { this.perceive(this.threat.e, 'görme', this.threat.e.pos, this.threat.lvl, {}).role = 'tehdit'; this.remember('danger', this.threat.pos, this.threat.lvl, 6); }
+    for (const p of this.percepts.values()) { p.dist = p.pos.distanceTo(pos); if (p.info.food) { p.role = 'yem'; p.why = p.info.why ?? 'yem'; } }
+  }
+
+  learnFeeding(at) {
+    const H = this.data.feedHours;
+    const h = Math.floor(this.world.hour ?? 12);
+    for (let i = 0; i < 24; i++) H[i] *= 0.97;
+    H[h] += 1;
+    this.remember('feedSpot', new THREE.Vector3(at.x, Math.min(at.y, TANK.water - 2.5), at.z), 1, 8);
+    const m = this.recall('feedSpot');
+    if (m) this.data.feedSpot = m.pos.toArray().map((v) => +v.toFixed(1));
+  }
+  feedExpectation() {
+    const H = this.data.feedHours;
+    const tot = H.reduce((a, b) => a + b, 0);
+    if (tot < 2 || !this.recall('feedSpot')) return 0;
+    const hr = this.world.hour ?? 12, h = Math.floor(hr) % 24, nx = (h + 1) % 24;
+    return Math.min(1, (H[h] * 0.6 + H[nx] * (hr - h)) / (tot * 0.3));
+  }
+
+  inspect() {
+    const o = super.inspect();
+    const d = this.data;
+    o.meta = [
+      `${d.sex === 'm' ? 'Erkek' : 'Dişi'} · ${(this.sp.body.length * (d.size ?? 1)).toFixed(1)} cm · ${d.trait} · görüş ${this.visR?.toFixed(0) ?? '?'} cm`,
+      `${this.mates.length} hemcinsini görüyor${this.prof.air ? ` · hava ihtiyacı %${Math.round(Math.min(1, this.airNeed) * 100)}` : ''}${this.nestSize ? ` · yuva %${Math.round(this.nestSize / 1.5 * 100)}` : ''} · yem beklentisi %${Math.round(this.feedExpectation() * 100)}`,
+    ];
+    o.bars = [['Tokluk', 100 - d.hunger, d.hunger > 70], ['Stres', d.stress, d.stress > 60], ['Sağlık', d.health, d.health < 50], ['Tedirginlik', this.alarm * 100, this.alarm > 0.5]];
+    return o;
   }
 
   get species() { return this.data.species; }
   get radius() { return this.total * 0.5; }
 
   pickTarget(world) {
+    // eski çağrılar için: tür bölgesinde yeni hedef
+    zonePoint(this, this.target);
+    this.targetTimer = 4 + Math.random() * 8;
+    if (world) return;
     const sp = this.sp;
     const m = 4;
     let x = (Math.random() - 0.5) * (TANK.w - m * 2);
@@ -160,67 +297,24 @@ export class Fish {
     // gececi türler (kuhli) gündüz saklanır, gece aktiftir
     const night = sp.nocturnal ? Math.max(0, 1 - world.night * 1.5) * 0.9 : world.night;
 
-    this.targetTimer -= dt;
-    if (this.state !== 'curious' || this.targetTimer < 0) {
-      if (pos.distanceTo(this.target) < 2.5 || this.targetTimer < 0) {
-        if (this.state === 'curious') this.state = 'wander';
-        this.pickTarget(world);
-      }
-    }
-
-    // --- Durum seçimi (öncelik sırası) ---
-    let state = this.state === 'curious' ? 'curious' : 'wander';
-    let food = null;
-    const hungry = d.hunger > (d.trait === 'Obur' ? 12 : 22);
-
-    const fe = this.feed;
-    if (fe && (fe.phase === 'hold' || fe.phase === 'spit')) {
-      state = 'eat';
-    } else if (this.flee > 0) {
-      state = 'flee';
-      this.flee -= dt;
-      if (fe) this.feed = null;
-    } else if (hungry && night < 0.7) {
-      food = this.findFood(world);
-      if (food) state = 'seek';
-    }
-    if (state === 'wander' || state === 'curious') {
-      if (world.o2 < 32 && !sp.bottom) state = 'air';
-      else if (night > 0.6) state = 'sleep';
-      else if (sp.school > 0.5 && world.counts[this.species] >= 3) state = 'school';
-      else if (d.stress > 60) state = 'hide';
-      else if (sp.bottom) state = 'forage';
-    }
-    // Corydoras: ara sıra yüzeye fırlayıp hava yutar
-    if (sp.bottom && state !== 'flee' && state !== 'seek') {
-      this.airTimer -= dt;
-      if (this.airTimer < 0 && night < 0.5) { this.airPhase = 1; this.airTimer = 60 + Math.random() * 120; world.events.push({ type: 'coryAir', fish: this }); }
-      if (this.airPhase > 0) state = 'air';
-    }
-    // Bölgecilik (beta) ve avlanma (melek balığı)
-    if (state !== 'flee' && state !== 'seek' && night < 0.6) {
-      this.aggroTimer -= dt;
-      if (this.aggro <= 0 && this.aggroTimer < 0) {
-        this.aggroTimer = sp.predator ? 18 + Math.random() * 25 : 4 + Math.random() * 6;
-        const rule = sp.territorial ?? sp.predator;
-        if (rule && (!sp.predator || d.hunger > 30)) {
-          let best = null, bd = rule.range;
-          for (const o of world.fish) {
-            const fry = sp.predator && o.data.fry && o.data.size < 0.6 && o.species !== this.species;
-            if (o === this || !((rule.targets ?? rule.prey).includes(o.species) || fry)) continue;
-            if (sp.territorial && o.data.fry) continue;
-            const dd = o.pos.distanceTo(pos);
-            if (dd < bd) { bd = dd; best = o; }
-          }
-          if (best) { this.prey = best; this.aggro = sp.predator ? 4 : 3; }
-        }
-      }
-    }
-    if (this.aggro > 0 && this.prey && world.fish.includes(this.prey) && state !== 'flee') {
-      this.aggro -= dt;
-      state = sp.predator ? 'hunt' : this.prey.species === this.species ? 'flare' : 'chase';
-    } else { this.aggro = 0; this.prey = null; }
-    this.state = state;
+    this.world = world;
+    this.alarm = Math.max(0, this.alarm - dt * 0.25);
+    this.rivalCooldown = (this.rivalCooldown ?? 0) - dt;
+    this.courtCooldown = (this.courtCooldown ?? 0) - dt;
+    this.grazeRest = (this.grazeRest ?? 0) - dt;
+    const P = this.prof;
+    if (P.air) this.airNeed += dt / (P.air === 'gut' ? 100 : P.air === 'labyrinth' ? (this.species === 'betta' ? 26 : 38) : 60) * (world.o2 < 40 ? 2 : 1);
+    if (this.flee > 0) this.flee -= dt;
+    // algı + karar: her karede değil, kısa aralıklarla (her balık kendi ritminde)
+    this.thinkAcc = (this.thinkAcc ?? Math.random() * this.thinkInterval) + dt;
+    if (this.thinkAcc >= this.thinkInterval) { this.sense(this.thinkAcc); this.decayPercepts(this.thinkAcc); this.brain.decide(this); this.thinkAcc = 0; }
+    this.mouthTarget = 0;
+    this.quiver = 0;
+    this.faceDir = null;
+    this.brain.tick(this, dt);
+    const state = this.state;
+    const food = this.foodTarget;
+    if (this.feed && state !== 'seek' && state !== 'eat') this.feed = null;
 
     // --- Yönlendirme ---
     const seekTo = (tgt, w = 1) => { _v2.subVectors(tgt, pos); const L = _v2.length(); if (L > 1e-3) acc.addScaledVector(_v2, w / L); };
@@ -242,18 +336,18 @@ export class Fish {
         break;
       }
       case 'air': {
-        if (sp.bottom) {
+        if (P.air === 'gut') {
           const up = this.airPhase === 1;
           _v2.set(pos.x + this.fwd.x * 3, up ? TANK.water - 0.6 : sandHeight(pos.x, pos.z) + 1, pos.z + this.fwd.z * 3);
           seekTo(_v2, 3);
           speed = sp.burst * 0.8;
           maxTurn = 6;
-          if (up && pos.y > TANK.water - 1.4) this.airPhase = 2;
+          if (up && pos.y > TANK.water - 1.4 - (this.localBox?.max.y ?? 0.5) * this.group.scale.x) this.airPhase = 2;
           if (!up && pos.y < sandHeight(pos.x, pos.z) + 2.5) this.airPhase = 0;
         } else {
-          _v2.set(this.target.x, TANK.water - 1.0, this.target.z);
+          _v2.set(this.goal.x, TANK.water - 1.0, this.goal.z);
           seekTo(_v2, 1.5);
-          speed = sp.cruise * 0.7;
+          speed = pos.y > TANK.water - 2 - (this.localBox?.max.y ?? 0.5) * this.group.scale.x ? 0.3 : Math.max(sp.cruise * 1.6, 4);
         }
         break;
       }
@@ -261,60 +355,112 @@ export class Fish {
       case 'flare':
       case 'hunt': {
         const p = this.prey;
+        if (!p) {
+          // aynadaki rakip: cama dönük durur, yüzgeçler gergin, solungaç kapakları açık
+          if (this.mirrorPt) { seekTo(this.mirrorPt, 1.5); speed = pos.distanceTo(this.mirrorPt) < 3 ? 0.3 : sp.cruise; this.faceDir = _fd.subVectors(this.mirrorPt, pos).setY(0).normalize(); this.u.uFlap.value += dt * 10; this.gillTarget = 1; maxTurn = 6; }
+          break;
+        }
         seekTo(p.pos, 2.5);
         const dist = p.pos.distanceTo(pos);
-        speed = state === 'flare' ? (dist < 4 ? 0.8 : sp.cruise * 1.5) : sp.burst * (state === 'hunt' ? 0.7 : 0.6);
+        speed = state === 'flare' ? (dist < 4 ? 0.8 : sp.cruise * 1.5) : sp.burst * (state === 'hunt' ? (dist > 5 ? 0.25 : 0.75) : this.chaseSoft ? 0.45 : 0.6);
         maxTurn = 6;
         if (state === 'flare') {
           // iki erkek beta: yüzgeçler gerilir, yan yana gösteriş
           this.u.uFlap.value += dt * 10;
+          this.gillTarget = 1;
           if (dist < 5 && !this.flared) { this.flared = true; world.events.push({ type: 'flare', fish: this }); }
           if (dist < 4) { p.data.stress = Math.min(100, p.data.stress + dt * 6); d.stress = Math.min(100, d.stress + dt * 3); }
-        } else if (dist < 6 && !(p.flee > 0)) p.scare?.(pos, state === 'hunt' ? 1.2 : 0.8);
-        if (state === 'chase' && dist < 1.5 && !this.nipped) {
+        } else if (dist < 6 && !(p.flee > 0) && !this.chaseSoft) p.scare?.(pos, state === 'hunt' ? 1.2 : 0.8, `${this.sp.name} saldırdı`);
+        if (state === 'chase' && !this.chaseSoft && dist < 1.5 && !this.nipped) {
           this.nipped = true;
           p.data.stress = Math.min(100, p.data.stress + 15);
           p.data.health = Math.max(0, p.data.health - 2);
           world.events.push({ type: 'nip', fish: this, target: p });
         }
-        if (state === 'hunt' && dist < 1.3 && Math.random() < dt * 2) {
+        if (state === 'hunt' && dist < 1.3 && Math.random() < dt * (p.state === 'sleep' ? 4 : 1.2)) {
           world.events.push({ type: 'predation', fish: this, target: p });
           d.hunger = Math.max(0, d.hunger - 30);
-          this.aggro = 0;
+          this.prey = null;
         }
-        if (this.aggro <= dt) { this.nipped = false; this.flared = false; }
         break;
       }
+      case 'court': {
+        // erkek dişinin önüne geçer; lepistes S gösterisi: gövde bükülür ve titrer
+        const p = this.prey;
+        if (!p) break;
+        _v2.copy(p.pos).addScaledVector(p.fwd, 2.2 * this.total / 3);
+        seekTo(_v2, 2);
+        const dist = pos.distanceTo(_v2);
+        speed = dist > 3 ? sp.cruise * 1.6 : 0.6;
+        maxTurn = 6;
+        if (dist < 3) {
+          this.faceDir = _fd.subVectors(p.pos, pos).normalize();
+          if (P.court === 'sigmoid') this.quiver = 1;
+          if (P.court === 'display') this.u.uFlap.value += dt * 8;
+          if (Math.random() < dt * 0.4) p.scare?.(pos, 0.1, 'erkek ısrarla kur yapıyor');
+        }
+        break;
+      }
+      case 'root':
+        // burun aşağı, yerinde eşeleme; arada kum bulutu
+        seekTo(this.goal, 0.4);
+        speed = 0.35;
+        this.faceDir = _fd.set(this.fwd.x, -0.8, this.fwd.z).normalize();
+        if (Math.random() < dt * 1.2) world.events.push({ type: 'sandPuff', fish: this, at: this.mouthWorld(_mw) });
+        break;
+      case 'graze': {
+        seekTo(this.goal, 1.2);
+        const dist = pos.distanceTo(this.goal);
+        speed = dist < 1.5 ? 0.15 : sp.cruise;
+        if (dist < 2) {
+          // ağız yüzeye dönük (cam ya da yaprak)
+          const nz = Math.abs(this.goal.z) > HALF_D - 2 ? Math.sign(this.goal.z) : 0;
+          this.faceDir = nz ? _fd.set(this.fwd.x * 0.3, 0.2, nz).normalize() : _fd.subVectors(this.goal, pos).normalize();
+          this.mouthTarget = 0.3 + 0.3 * Math.sin(this.breath * 3);
+        }
+        break;
+      }
+      case 'wait':
+        seekTo(this.goal, 1);
+        speed = pos.distanceTo(this.goal) < 3 ? 0.4 : sp.cruise * 1.2;
+        if (pos.distanceTo(this.goal) < 3) this.faceDir = _fd.set(this.fwd.x, 0.45, this.fwd.z).normalize();
+        break;
+      case 'nest':
+        seekTo(this.goal, 1.5);
+        speed = pos.distanceTo(this.goal) < 2 ? 0.3 : sp.cruise;
+        break;
       case 'sleep':
-        seekTo(this.target, 0.5);
+        seekTo(this.goal, 0.5);
+        if (pos.distanceTo(this.goal) < 1.5) speed = 0.05;
         speed = sp.cruise * 0.18;
         maxTurn = 1;
         break;
       case 'school': {
-        const sc = world.school[this.species];
-        seekTo(sc.target, 0.55);
-        this.boids(world, acc, 1);
-        speed = sp.cruise * (0.9 + sc.excite * 0.8);
+        const ex = world.school?.[this.species]?.excite ?? 0;
+        seekTo(this.goal, 0.45);
+        // tedirginken sürü sıkılaşır (komşulara daha çok yapışır)
+        this.boids(world, acc, 1 + this.alarm * 1.5);
+        speed = sp.cruise * (0.9 + ex * 0.6 + this.alarm * 0.5);
         break;
       }
       case 'hide':
-        seekTo(this.target, 0.8);
-        speed = sp.cruise * 1.1;
+        seekTo(this.goal, 0.8);
+        speed = pos.distanceTo(this.goal) < 2 ? 0.2 : sp.cruise * 1.1;
         break;
       case 'forage': {
         // kısa koşular + duraklamalar
         this.restTimer -= dt;
-        if (this.restTimer < 0) { this.restTimer = Math.random() < 0.5 ? 1 + Math.random() * 4 : 1 + Math.random() * 2; this.resting = !this.resting; if (!this.resting) this.pickTarget(world); }
+        if (this.restTimer < 0) { this.restTimer = Math.random() < 0.5 ? 1 + Math.random() * 4 : 1 + Math.random() * 2; this.resting = !this.resting; }
         if (this.resting) { speed = 0.25; this.state = 'rest'; }
-        else seekTo(this.target, 1);
+        else seekTo(this.goal, 1);
         break;
       }
       default:
-        seekTo(this.target, 1);
-        if (this.state === 'curious' && pos.distanceTo(this.target) < 4) speed = 0.6;
+        seekTo(this.goal, 1);
+        if (state === 'curious' && pos.distanceTo(this.goal) < 4) { speed = 0.6; this.faceDir = _fd.set(0, 0, 1); }
     }
 
-    if (sp.school > 0 && state !== 'school' && state !== 'flee') this.boids(world, acc, sp.school * 0.4);
+    if ((P.shoal ?? sp.school) > 0 && !['school', 'flee', 'sleep', 'hunt', 'court'].includes(state)) this.boids(world, acc, (P.shoal ?? sp.school) * 0.35);
 
     // Ayrılma (tüm balıklar)
     for (const o of world.fish) {
@@ -345,6 +491,8 @@ export class Fish {
     acc.y += edge(pos.y, lo, hi, 2.5) * 3;
     // balıklar çoğunlukla yatay yüzer
     if (!sp.bottom && state !== 'air') acc.y *= 0.6;
+    // dip balığı suyun ortasında kaldıysa (hava yuttuktan sonra) süzülerek dibe iner
+    if (sp.bottom && state !== 'air' && pos.y > floor + 3) { acc.y -= 2; speed = Math.max(speed, sp.cruise * 1.4); }
 
     // --- Kaçış refleksi (C-start): gövde önce C şeklinde bükülür, sonra fırlar ---
     const fleeing = state === 'flee';
@@ -360,7 +508,7 @@ export class Fish {
     }
 
     // --- Yürüyüş ritmi ---
-    const calm = !fleeing && state !== 'seek' && state !== 'eat' && state !== 'hunt' && state !== 'chase';
+    const calm = !fleeing && !['seek', 'eat', 'hunt', 'chase', 'court', 'graze', 'root', 'wait', 'air'].includes(state);
     this.thrust = 1;
     if (calm && (this.gait === 'burst' || this.gait === 'hop')) {
       if (this.coast > 0) {
@@ -395,12 +543,13 @@ export class Fish {
     pos.y = THREE.MathUtils.clamp(pos.y, lo - 0.3, TANK.water - 0.4);
 
     const spd = this.vel.length();
-    const face = (state === 'seek' || state === 'eat') && this.faceDir;
+    const face = !!this.faceDir;
     if (spd > 0.4 || face) {
       // nişan alırken burun hıza değil yeme döner
       const dir = face ? _x.copy(this.faceDir) : _x.copy(this.vel).divideScalar(spd);
       // eğim sınırla
-      const maxPitch = face ? 1.1 : sp.bottom && state !== 'air' ? 0.25 : 0.6;
+      const high = pos.y > sandHeight(pos.x, pos.z) + 3;
+      const maxPitch = face ? 1.1 : sp.bottom && state !== 'air' && !high ? 0.25 : 0.6;
       // eğim sınırı: yön yatay bileşenini korur (dikey hızda bile balık dik durmaz, ekseni etrafında savrulmaz)
       dir.normalize();
       const py = THREE.MathUtils.clamp(dir.y, -Math.min(maxPitch, 0.82), Math.min(maxPitch, 0.82));
@@ -446,7 +595,8 @@ export class Fish {
     this.u.uPhase.value += dt * freq;
     this.u.uAmp.value = THREE.MathUtils.lerp(this.u.uAmp.value, amp, this.thrust ? 0.2 : 0.06);
     const turnBend = THREE.MathUtils.clamp(-this.yawRate * 0.09, -0.35, 0.35);
-    const bendT = this.cstart > 0 ? this.cside * 1.1 : turnBend;
+    // lepistes S gösterisi: gövde bükülü ve hızla titrer
+    const bendT = this.cstart > 0 ? this.cside * 1.1 : turnBend + this.quiver * (0.22 + 0.08 * Math.sin(this.time2 = (this.time2 ?? 0) + dt * 40));
     this.bend = THREE.MathUtils.lerp(this.bend, bendT, this.cstart > 0 ? 0.45 : 0.15);
     this.u.uBend.value = this.bend;
     this.u.uFlap.value += dt * (spd < 1.5 ? 11 : 4);
@@ -671,9 +821,12 @@ export class Fish {
     return best;
   }
 
-  scare(from, strength = 1) {
+  scare(from, strength = 1, why = 'ani hareket / gölge') {
     const d = this.pos.distanceTo(from);
     if (d > 30) return;
+    this.fleeWhy = why;
+    this.alarm = Math.max(this.alarm ?? 0, Math.min(1, strength * (1 - d / 30) * 1.5));
+    this.remember?.('danger', from, strength, 6);
     this.flee = 0.8 + Math.random() * 0.8;
     this.fleeDir.subVectors(this.pos, from).normalize();
     this.fleeDir.y += (Math.random() - 0.5) * 0.5;

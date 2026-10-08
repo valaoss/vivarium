@@ -3,25 +3,23 @@ import { icon, h } from '../ui/hud.js';
 
 // Geliştirici gözlem sistemi: seçili canlının ihtiyaçları, algıları, karar puanları ve gerekçeleri,
 // hedefi, hafızası; sahnede algı çizgileri, görüş/titreşim menzili, hedef ve ayak temasları.
-// Ayrıca test senaryoları: hız, sıcaklık, nem, cırcır / erkek örümcek ekleme, tehdit.
+// Ayrıca test senaryoları (sahneye göre): hız, ortam, yem, tehdit.
 
 const SENSE_COL = { 'koku': 0xff9de6, 'görme': 0x7fd0ff, 'titreşim:water': 0x4fffd0, 'titreşim:ground': 0xffc35a, 'hava akımı (cerci)': 0xd59bff, 'temas': 0xffffff };
 const ROLE_COL = { 'av': '#7fe08a', 'av?': '#b9e07f', 'tehdit': '#ff7a6a', 'eş': '#ff9de6', 'rakip': '#ffb36a', 'önemsiz': '#9aa4ad' };
 
-export function createObserver(terra, root) {
+// host: sahne sahibi (teraryum ya da akvaryum) — scene, eco, camera, controls, on('select')
+// cfg: { speeds, setSpeed(v), rows: [[etiket, [[düğme, fn(sel)]]]], ranges(sel) → { vis, vib } }
+export function createObserver(terra, root, cfg) {
+  const rows = cfg.rows.map(([label, btns]) => `<div class="obs-ctl"><span>${label}</span>${btns.map(([t], i) => `<button data-row="${label}" data-i="${i}">${t}</button>`).join('')}</div>`).join('');
   const panel = h(`<div class="obs glass hidden">
     <div class="obs-head"><b>Gözlem</b><span class="obs-sub">bir canlıya dokun</span>
       <button class="obs-x">${icon('close')}</button></div>
     <div class="obs-ctl">
-      <span>Hız</span><button data-sp="1">1×</button><button data-sp="5">5×</button><button data-sp="20">20×</button><button data-sp="60">60×</button>
+      <span>Hız</span>${cfg.speeds.map((v) => `<button data-sp="${v}">${v}×</button>`).join('')}
       <button data-act="follow" title="Kamera takip">${icon('follow')}</button>
     </div>
-    <div class="obs-ctl">
-      <span>Ortam</span><button data-act="cold">−2°C</button><button data-act="warm">+2°C</button><button data-act="dry">Kurut</button><button data-act="night">Gece/Gündüz</button>
-    </div>
-    <div class="obs-ctl">
-      <span>Senaryo</span><button data-act="worm">+Solucan</button><button data-act="threat">Tehdit</button><button data-act="starve">Aç bırak</button><button data-act="air">O₂ bitir</button>
-    </div>
+    ${rows}
     <div class="obs-body"></div>
   </div>`);
   root.appendChild(panel);
@@ -53,22 +51,16 @@ export function createObserver(terra, root) {
   const set = (v) => { on = v; panel.classList.toggle('hidden', !on); g.visible = on && !!sel; terra.observing = on; };
   panel.querySelector('.obs-x').onclick = () => set(false);
   panel.querySelectorAll('[data-sp]').forEach((b) => b.onclick = () => {
-    terra.speedMul = +b.dataset.sp;
+    cfg.setSpeed(+b.dataset.sp);
     panel.querySelectorAll('[data-sp]').forEach((x) => x.classList.toggle('on', x === b));
   });
-  panel.querySelector('[data-sp="1"]').classList.add('on');
-  const act = {
-    follow: (b) => { follow = !follow; b.classList.toggle('on', follow); if (follow && sel) camOff.subVectors(terra.camera.position, sel.pos).setLength(Math.min(28, terra.camera.position.distanceTo(sel.pos))); },
-    cold: () => { terra.heatOffset = (terra.heatOffset ?? 0) - 2; terra.temp -= 2; },
-    warm: () => { terra.heatOffset = (terra.heatOffset ?? 0) + 2; terra.temp += 2; },
-    dry: () => { terra.state.humidity = Math.max(30, terra.state.humidity - 25); },
-    night: () => { terra.state.minutes += 12 * 60; },
-    worm: () => { const a = Math.random() * 6.28, r = 6 + Math.random() * 8, p = sel?.pos ?? new THREE.Vector3(); terra.dropWorm(p.x + Math.sin(a) * r, p.z + Math.cos(a) * r); },
-    air: () => { if (sel?.needs?.oxygen !== undefined) sel.needs.oxygen = 8; },
-    threat: () => terra.pokeThreat?.(sel?.pos),
-    starve: () => { if (sel?.needs) sel.needs.energy = 8; },
-  };
-  panel.querySelectorAll('[data-act]').forEach((b) => b.onclick = () => act[b.dataset.act](b));
+  panel.querySelector('[data-sp]').classList.add('on');
+  panel.querySelector('[data-act="follow"]').onclick = (e) => { follow = !follow; e.currentTarget.classList.toggle('on', follow); };
+  panel.querySelectorAll('[data-row]').forEach((b) => b.onclick = () => {
+    const row = cfg.rows.find(([l]) => l === b.dataset.row);
+    row[1][+b.dataset.i][1](sel);
+  });
+  void camOff;
 
   const bar = (label, v, warn) => `<div class="obs-bar ${warn ? 'warn' : ''}"><span>${label}</span><i style="--v:${Math.max(0, Math.min(100, v))}%"></i><em>${Math.round(v)}</em></div>`;
   const esc = (t) => String(t ?? '').replace(/</g, '&lt;');
@@ -107,7 +99,7 @@ export function createObserver(terra, root) {
     g.visible = on;
     const pts = [], cols = [];
     const c = new THREE.Color();
-    const from = sel.body ? sel.body.bodyCenter(new THREE.Vector3()) : sel.headPos ? sel.headPos(new THREE.Vector3()) : sel.pos.clone().add(new THREE.Vector3(0, 0.5, 0));
+    const from = sel.body?.bodyCenter ? sel.body.bodyCenter(new THREE.Vector3()) : sel.headPos ? sel.headPos(new THREE.Vector3()) : sel.pos.clone().add(new THREE.Vector3(0, 0.5, 0));
     for (const p of sel.percepts.values()) {
       const s = [...p.senses][0] ?? 'temas';
       c.setHex(SENSE_COL[s] ?? 0xcccccc).multiplyScalar(0.4 + p.conf * 0.6);
@@ -126,17 +118,17 @@ export function createObserver(terra, root) {
     geo.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
     geo.setAttribute('color', new THREE.Float32BufferAttribute(cols, 3));
     const base = sel.pos;
-    const vr = sel.kind === 'spider' ? 22 * (0.6 + 0.4 * sel.sizeScale) * THREE.MathUtils.lerp(0.22, 1, terra.lightLevel ?? 1) * 0.5 : sel.kind === 'newt' ? (sel.inWater ? 12 : 18) * THREE.MathUtils.lerp(0.45, 1, terra.lightLevel ?? 1) * 0.5 : 7;
-    visRing.position.set(base.x, base.y + 0.15, base.z); visRing.scale.setScalar(vr);
-    vibRing.position.copy(visRing.position); vibRing.scale.setScalar(sel.kind === 'spider' ? (sel.body.contactWater > 0.1 ? 11 : 2.6) * 1.5 : sel.kind === 'newt' ? (sel.inWater ? 7.5 : 0.01) : 3);
-    if (sel.body) {
+    const R = cfg.ranges?.(sel) ?? { vis: 7, vib: 3 };
+    visRing.position.set(base.x, base.y + 0.15, base.z); visRing.scale.setScalar(Math.max(0.01, R.vis));
+    vibRing.position.copy(visRing.position); vibRing.scale.setScalar(Math.max(0.01, R.vib));
+    if (sel.body?.feet) {
       sel.body.feet.forEach((f, i) => {
         feetI.setMatrixAt(i, new THREE.Matrix4().makeTranslation(f.pos.x, f.pos.y, f.pos.z));
         feetI.setColorAt(i, c.setHex(f.held > 0 ? 0xff7a6a : f.planted ? 0x7fe08a : 0xffe066));
       });
       feetI.count = 8; feetI.instanceMatrix.needsUpdate = true; feetI.instanceColor.needsUpdate = true;
     } else feetI.count = 0;
-    feetI.visible = !!sel.body;
+    feetI.visible = !!sel.body?.feet;
     tgt.visible = !!sel.target?.pos;
     if (tgt.visible) tgt.position.copy(sel.target.pos).add(_v.set(0, 0.2, 0));
   }

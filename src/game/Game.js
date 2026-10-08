@@ -20,6 +20,8 @@ import { FISH_SHARED } from '../creatures/fishMaterial.js';
 import { newWater, tick, quality, turbidity, waterChange } from '../sim/ecosystem.js';
 import { QUESTS, currentQuest } from './quests.js';
 import { mulberry } from '../render/textures.js';
+import { Ecosystem } from '../eco/Ecosystem.js';
+import { createBubbleNest } from '../world/bubbleNest.js';
 
 const SAVE_KEY = 'vivarium.save.v1';
 const _ray = new THREE.Raycaster();
@@ -87,6 +89,9 @@ export class Game {
     this.fx = createPostFX(this.renderer, this.scene, this.camera);
 
     this.WU = WU;
+    this.eco = new Ecosystem(this);
+    this.nest = createBubbleNest(TANK.water);
+    this.scene.add(this.nest.mesh);
     this.creatures = [];
     this.food = [];
     this.events = [];
@@ -291,7 +296,9 @@ export class Game {
   addCreature(data) {
     const kind = SPECIES[data.species].kind;
     const C = kind === 'shrimp' ? Shrimp : kind === 'snail' ? Snail : Fish;
-    const c = new C(data);
+    const c = new C(data, this.eco);
+    c.kind ??= kind;
+    this.eco.add(c);
     this.creatures.push(c);
     this.state.creatures.push(data);
     this.state.seen ??= [];
@@ -301,6 +308,7 @@ export class Game {
   }
 
   removeCreature(c) {
+    this.eco.remove(c);
     this.scene.remove(c.group);
     c.dispose();
     this.creatures.splice(this.creatures.indexOf(c), 1);
@@ -454,6 +462,8 @@ export class Game {
     }
     this.waterSim.drop(x, z, 1.4, 0.09);
     for (const f of this.food.slice(-n)) this.waterSim.drop(f.pos.x, f.pos.z, 0.45, 0.025);
+    this.eco.vibrate(null, new THREE.Vector3(x, TANK.water, z), 'water', 1, 0.2, 0.3);
+    this.eco.vib[this.eco.vib.length - 1].kind = 'food';
     this.sfx('feed');
     this.state.counters.fed++;
     for (const s of Object.values(this.school)) s.excite = 1;
@@ -521,6 +531,7 @@ export class Game {
     this.meniscus.position.y = y - full;
     this.godrays.position.y = y - full;
     this.reflection.height = y;
+    this.nest?.setWater(y);
     for (const p of this.plants.plants) if (p.type === 'frogbit' && p.model) { p.y = y + 0.04; p.model.position.y = p.y; }
     for (const f of this.food) if (f.state === 'float') f.pos.y = y - 0.05;
   }
@@ -630,6 +641,9 @@ export class Game {
           f.pos.y = TANK.water - 0.05;
           f.state = 'float';
           f.t = 1.5 + Math.random() * 3;
+          f.age = 0;
+          this.eco.vibrate(null, f.pos, 'water', 0.6, 0.2, 0.2);
+          this.eco.vib[this.eco.vib.length - 1].kind = 'food';
           f.rot.x = -Math.PI / 2 + (Math.random() - 0.5) * 0.3;
           this.waterSim.drop(f.pos.x, f.pos.z, 0.45, 0.03);
           if (!this.pourLanded) {
@@ -1115,8 +1129,14 @@ export class Game {
       school: this.school,
       algae: w.algae / 100,
       cleanGlass: (x, y, a) => this.cleanGlass(x, y, a),
+      hour: this.hour,
+      turbidity: WU.uTurbidity.value,
+      flow: this.state.airstone ? 0.7 : 0.25,
     };
+    this.eco.time += bdt;
+    this.eco.vib = this.eco.vib.filter((v) => this.eco.time - v.t < 1.2);
     for (const c of this.creatures) c.update(bdt, world);
+    this.nest.update(bdt, world.flow);
     this.updateFood(bdt, dtMin);
     this.updateWaterChange(dt);
     if (this.feeder.group.visible) {
@@ -1141,8 +1161,14 @@ export class Game {
         this.discover('angelHunt', 'Melek balıkları, ağızlarına sığan küçük balıkları doğada da avlar.');
       }
       if (ev.type === 'coryAir') this.discover('coryAir', 'Corydoras bağırsağıyla da nefes alabilir; yüzeye fırlayıp hava yuttu!');
+      if (ev.type === 'gulp' && ev.fish.prof?.air === 'labyrinth') this.discover('labyrinth', `${ev.fish.sp.name} labirent organıyla suyun üstünden hava soluyor; bu yüzden ara ara yüzeye çıkar.`);
+      if (ev.type === 'nestBubble') { this.nest.add(ev.at.x, ev.at.z); if (this.nest.size > 25) this.discover('bubbleNest', `${ev.fish.data.name} yüzeyde köpük yuvası kuruyor. Erkek ${ev.fish.sp.name.toLowerCase()} yumurtaları bu kabarcıkların arasında korur.`); }
+      if (ev.type === 'sandPuff' && Math.random() < 0.3) this.waterSim && this.dust?.userData?.puff?.(ev.at);
     }
     this.events.length = 0;
+    if (this.creatures.some((c) => c.state === 'flare' && !c.prey)) this.discover('bettaMirror', 'Beta camdaki kendi yansımasını rakip sanıp yüzgeçlerini açtı.');
+    if (this.creatures.some((c) => c.state === 'court' && c.prof?.court === 'sigmoid')) this.discover('guppySigmoid', 'Erkek lepistes dişinin önünde gövdesini S biçiminde büküp titretiyor: bu kur gösterisine "sigmoid" denir.');
+    if (this.creatures.some((c) => c.state === 'wait')) this.discover('anticipate', 'Balıklar yem saatini öğrendi: o saatte yemin düştüğü yere toplanıyorlar.');
     if (this.night > 0.8 && this.creatures.some((c) => c.state === 'sleep')) {
       this.discover('nightNeon', this.count('neon') ? 'Neon tetraların şeridi gece solar; dinlenirken renklerini kısarlar.' : 'Balıklar gece yavaşlayıp tabana yakın dinleniyor.');
     }

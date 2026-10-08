@@ -1,3 +1,5 @@
+import * as THREE from 'three';
+import { createObserver } from '../terra/observer.js';
 import { SPECIES, TRAIT_INFO, compatWarnings } from '../creatures/species.js';
 import { PLANT_TYPES } from '../world/plants.js';
 import { STATE_LABEL } from '../creatures/Fish.js';
@@ -97,8 +99,19 @@ export function createHUD(game, root, sound) {
       <button data-act="shop">${icon('shop')}<span>Dükkân</span></button>
       <button data-act="photo">${icon('camera')}<span>Fotoğraf</span></button>
       <button data-act="sound">${icon('sound')}<span>Ses</span></button>
+      <button data-act="observe">${icon('scope')}<span>Gözlem</span></button>
       <button data-act="terra">${icon('terra')}<span>Teraryum</span></button>
     </div>`);
+  const obs = createObserver(game, root, {
+    speeds: [1, 4, 16],
+    setSpeed: (v) => game.setSpeed?.(v) ?? (game.speed = v),
+    rows: [
+      ['Ortam', [['Gece/Gündüz', () => { game.state.minutes += 12 * 60; }], ['O₂ düşür', () => { game.state.water.o2 = 22; }], ['Bulanık', () => { game.state.water.waste = 30; }]]],
+      ['Senaryo', [['+Yem', () => game.dropFood((Math.random() - 0.5) * 30, (Math.random() - 0.5) * 10)], ['Cama vur', (sel) => game.tapGlass(sel ? sel.pos.clone().setZ(20) : new THREE.Vector3(0, 15, 20))], ['Aç bırak', (sel) => { if (sel?.data) sel.data.hunger = 85; }]]],
+    ],
+    ranges: (sel) => ({ vis: sel.visR ?? 6, vib: 9 }),
+  });
+  right.querySelector('[data-act="observe"]').addEventListener('click', (e) => { obs.toggle(); e.currentTarget.classList.toggle('on', obs.on); });
   right.querySelector('[data-act="terra"]').addEventListener('click', () => {
     game.save();
     try { localStorage.setItem('vivarium.habitat', 'terra'); } catch { /* yok */ }
@@ -376,6 +389,7 @@ export function createHUD(game, root, sound) {
   let acc = 0;
   return {
     update(dt) {
+      obs.update(dt);
       syncWater();
       acc += dt;
       if (acc < 0.2) return;

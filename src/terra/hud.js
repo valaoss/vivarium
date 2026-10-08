@@ -41,7 +41,15 @@ export function createTerraHUD(terra, root) {
   root.appendChild(toasts);
   const hint = h('<div class="mode-hint hidden"></div>');
   root.appendChild(hint);
-  const obs = createObserver(terra, root);
+  const obs = createObserver(terra, root, {
+    speeds: [1, 5, 20, 60],
+    setSpeed: (v) => { terra.speedMul = v; },
+    rows: [
+      ['Ortam', [['−2°C', () => { terra.heatOffset = (terra.heatOffset ?? 0) - 2; terra.temp -= 2; }], ['+2°C', () => { terra.heatOffset = (terra.heatOffset ?? 0) + 2; terra.temp += 2; }], ['Kurut', () => { terra.state.humidity = Math.max(30, terra.state.humidity - 25); }], ['Gece/Gündüz', () => { terra.state.minutes += 12 * 60; }]]],
+      ['Senaryo', [['+Solucan', (sel) => { const a = Math.random() * 6.28, r = 6 + Math.random() * 8, p = sel?.pos ?? { x: 0, z: 0 }; terra.dropWorm(p.x + Math.sin(a) * r, p.z + Math.cos(a) * r); }], ['Tehdit', (sel) => terra.pokeThreat(sel?.pos)], ['Aç bırak', (sel) => { if (sel?.needs) sel.needs.energy = 8; }], ['O₂ bitir', (sel) => { if (sel?.needs?.oxygen !== undefined) sel.needs.oxygen = 8; }]]],
+    ],
+    ranges: (sel) => sel.kind === 'newt' ? { vis: (sel.inWater ? 12 : 18) * (0.45 + 0.55 * (terra.lightLevel ?? 1)) * 0.5, vib: sel.inWater ? 7.5 : 4 } : { vis: 7, vib: 3 },
+  });
 
   const setMode = (m) => {
     terra.mode = m;
