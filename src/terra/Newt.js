@@ -1,6 +1,9 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
+import { Agent, senseVision, senseVibration } from '../eco/Agent.js';
+import { Brain } from '../eco/Brain.js';
+import { NEWT_ACTIONS } from './newtActions.js';
 
 // Japon kırmızı karınlı semenderi (Cynops pyrrhogaster), ffish.asia CC0 taraması.
 // Modeldeki tek animasyon bir solucan yeme sahnesi; yürüme, yüzme, nefes ve av hareketleri
@@ -12,6 +15,7 @@ const S = LENGTH / MODEL_LEN;
 const FOOT_Y = 0.62;               // gövde yere yakın: dirsekler yana açık, karın neredeyse yere değer
 const TRUNK_MID = -0.2;            // dönüş ekseni: gövde ortası (model x)
 const SPRAWL = 0.32;               // semenderin yayvan duruşu: üst kol/uyluk yataya yakın
+const UNKEN = 1;                   // unken kavisinin yönü (model ekseni)
 
 const TRUNK = ['Bone_109', 'Bone001_84', 'Bone018_83', 'Bone002_82', 'Bone003_81', 'Bone016_80', 'Bone004_79', 'Bone005_78'];
 const TAIL = ['Bone006_51', 'Bone007_50', 'Bone008_49', 'Bone009_48', 'Bone010_47', 'Bone011_46', 'Bone012_45', 'Bone013_44', 'Bone014_43', 'Bone015_42', 'Bone017_41'];
@@ -30,6 +34,7 @@ const UP = new THREE.Vector3(0, 1, 0);
 const LONG = new THREE.Vector3(1, 0, 0);   // model x: kuyruğa doğru
 const LAT = new THREE.Vector3(0, 0, 1);    // model z: sol
 const _v = new THREE.Vector3(), _q = new THREE.Quaternion(), _w = new THREE.Vector3();
+const _hp = new THREE.Vector3(), _fw = new THREE.Vector3(), _lv = new THREE.Vector3(), _q1 = new THREE.Vector3();
 const smooth = (t) => t * t * (3 - 2 * t);
 const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 
@@ -55,15 +60,30 @@ class Joint {
   }
 }
 
-export const NEWT_LABEL = {
-  rest: 'Dinleniyor', walk: 'Geziniyor', swim: 'Yüzüyor', air: 'Yüzeyden hava alıyor', stalk: 'Avına yaklaşıyor',
-  strike: 'Avını yakaladı', swallow: 'Yutuyor', hide: 'Kabuğun altında saklanıyor',
-};
+// Algı: hareket eden avı görme (ışığa bağlı), suda yayılan / karada zayıf koku, suda yan çizgi.
+const VISION = { fovCos: -0.35, night: 0.45, still: 0.15, motionRef: 0.6, thresh: 0.06 };
 
-export class Newt {
+export class Newt extends Agent {
   constructor(world, data = {}) {
+    super(world.eco, { species: 'cynops', thinkInterval: 0.25, seed: data.seed });
     this.world = world;
-    this.data = { name: 'Beni', hunger: 30, size: 0.8, adultSize: 1, ...data };
+    this.kind = 'newt';
+    this.label = 'Semender';
+    this.data = { name: 'Beni', size: 0.8, adultSize: 1, sex: Math.random() < 0.5 ? 'F' : 'M', shed: Math.random() * 0.6, feedHours: new Array(24).fill(0), ...data };
+    delete this.data.seed;
+    const d = this.data;
+    if (d.needs) Object.assign(this.needs, d.needs);
+    else this.needs.energy = 100 - (d.hunger ?? 40);
+    delete this.needs.water;
+    if (!Number.isFinite(this.needs.stress)) this.needs.stress = 0;
+    this.needs.oxygen ??= 100;
+    this.needs.moisture ??= 100;
+    this.traits = d.traits ?? {
+      activity: this.trait(0.5, 0.18), boldness: this.trait(0.45, 0.18), terrestrial: this.trait(0.35, 0.15),
+      olfaction: this.trait(0.5, 0.15),
+    };
+    d.traits = this.traits;
+    this.brain = new Brain(NEWT_ACTIONS);
     this.root = new THREE.Group();
     this.pitchGroup = new THREE.Group();
     this.root.add(this.pitchGroup);
@@ -94,158 +114,242 @@ export class Newt {
     m.metalness = 0;
     if ('clearcoat' in m) { m.clearcoat = 0.3; m.clearcoatRoughness = 0.5; }
 
-    const p = data.pos ?? [0, 0, 0];
+    const p = d.pos ?? [0, 0, 0];
     this.pos = new THREE.Vector3(...p);
-    this.heading = data.heading ?? Math.random() * Math.PI * 2;
+    this.heading = d.heading ?? this.rand() * Math.PI * 2;
     this.speed = 0;
     this.vy = 0;
-    this.phase = 0;          // yürüme döngüsü 0..1
+    this.phase = 0;
     this.swimPhase = 0;
     this.swimBlend = world.depthAt(this.pos.x, this.pos.z) > 1.5 ? 1 : 0;
     this.state = 'rest';
-    this.timer = 3 + Math.random() * 5;
-    this.target = new THREE.Vector3();
+    this.aim = new THREE.Vector3();
+    this.mv = { to: null, face: null, speed: 0, depth: 'cruise' };
     this.look = { yaw: 0, pitch: 0, tyaw: 0, tpitch: 0, timer: 1 };
     this.jaw = 0;
     this.strikeT = 0;
-    this.airTimer = 60 + Math.random() * 120;
-    this.breath = Math.random() * 10;
+    this.swallowT = 0;
+    this.breath = this.rand() * 10;
     this.pitch = 0;
     this.roll = 0;
     this.bendSmooth = 0;
+    this.unkenW = 0;
     this.prey = null;
+    this.threat = null;
+    this.threatLevel = 0;
+    this.odor = null;
+    this.restless = 0;            // uzun hareketsizlikten sonra artan gezinme dürtüsü
+    this.knownFood = new Set();   // daha önce fark ettiği yiyecekler (yem anını öğrenmek için)
+    this.seedMemory();
     this.constrain();
     this.place();
   }
 
-  serialize() {
-    return { ...this.data, pos: this.pos.toArray().map((v) => +v.toFixed(2)), heading: +this.heading.toFixed(3) };
-  }
-
   get inWater() { return this.swimBlend > 0.5; }
+  get size() { return LENGTH * this.data.size; }
+  get radius() { return 2; }
+  get q() { return 2 ** (((this.world.temperature ?? 20) - 20) / 10); }      // Q10 ≈ 2 (ektoterm)
 
-  // ---------------------------------------------------------------- Davranış
-  pickTarget(preferWater) {
-    const w = this.world;
-    for (let k = 0; k < 30; k++) {
-      const x = (Math.random() - 0.5) * (w.w - 18), z = (Math.random() - 0.5) * (w.d - 16);
-      const deep = w.depthAt(x, z) > 2;
-      if (preferWater !== undefined && deep !== preferWater) continue;
-      if (w.blocked(x, z, 3)) continue;
-      this.target.set(x, 0, z);
-      return;
-    }
-    this.target.set(0, 0, 0);
+  serialize() {
+    const fs = this.recall('feedSpot');
+    return { ...this.data, needs: { ...this.needs }, feedSpot: fs ? fs.pos.toArray() : null, pos: this.pos.toArray().map((v) => +v.toFixed(2)), heading: +this.heading.toFixed(3) };
   }
 
-  think(dt) {
+  // Bu terrarumda yaşayan bir hayvan: yuvasını, gölet derinliklerini ve kuytuları bilir
+  seedMemory() {
     const w = this.world;
-    const d = this.data;
-    this.timer -= dt;
-    if (this.inWater) this.airTimer -= dt;
-
-    // Av: hareket eden solucanı fark et (suda koku, karada görme ile)
-    if (!this.prey && d.hunger > 15 && !['strike', 'swallow', 'air'].includes(this.state)) {
-      let best = null, bd = 28;
-      for (const f of w.food) {
-        if (f.eaten || f.claimed) continue;
-        const dist = Math.hypot(f.pos.x - this.pos.x, f.pos.z - this.pos.z);
-        if (dist < bd) { bd = dist; best = f; }
-      }
-      if (best) { this.prey = best; best.claimed = true; this.state = 'stalk'; }
+    if (w.hidePos) this.remember('shelter', w.hidePos, 1.2, 4);
+    for (const o of w.obstacles) if (o.top) this.remember('shelter', new THREE.Vector3(o.x, 0, o.z), 0.7, 4);
+    for (let k = 0; k < 40; k++) {
+      const x = -26 + (k % 8) * 5, z = -20 + Math.floor(k / 8) * 8;
+      if (w.depthAt(x, z) > 2.5) this.remember('pool', new THREE.Vector3(x, w.waterY - 2, z), 0.6 + w.depthAt(x, z) * 0.1, 5);
     }
-
-    switch (this.state) {
-      case 'rest':
-      case 'hide':
-        if (this.timer < 0) {
-          const night = w.night;
-          const goWater = Math.random() < (night ? 0.55 : 0.35);
-          this.pickTarget(goWater);
-          this.state = 'walk';
-          this.timer = 40;
-        }
-        break;
-      case 'walk':
-      case 'swim': {
-        this.state = this.inWater ? 'swim' : 'walk';
-        const dist = Math.hypot(this.target.x - this.pos.x, this.target.z - this.pos.z);
-        if (this.inWater && this.airTimer < 0) { this.state = 'air'; this.timer = 12; break; }
-        if (dist < 2.2 || this.timer < 0) {
-          const nearHide = w.hide && this.pos.distanceTo(w.hide) < 6;
-          this.state = nearHide && !w.night ? 'hide' : 'rest';
-          this.timer = this.inWater ? 3 + Math.random() * 6 : 6 + Math.random() * 14;
-          if (Math.random() < 0.25 && !w.night && !this.inWater && w.hide) {
-            this.target.copy(w.hide); this.state = 'walk'; this.timer = 40;
-          }
-        }
-        break;
-      }
-      case 'air':
-        if (this.timer < 0) { this.airTimer = 90 + Math.random() * 150; this.pickTarget(); this.state = 'swim'; this.timer = 30; }
-        break;
-      case 'stalk': {
-        const f = this.prey;
-        if (!f || f.eaten) { this.prey = null; this.state = 'rest'; this.timer = 2; break; }
-        this.target.copy(f.pos);
-        const head = this.headPos(_w);
-        const dist = Math.hypot(f.pos.x - head.x, f.pos.z - head.z);
-        const ang = Math.abs(wrap(Math.atan2(f.pos.x - this.pos.x, f.pos.z - this.pos.z) - this.heading));
-        // son yaklaşma: dur, başını hedefe çevir, sonra ani atak
-        if (dist < 1.6 && ang < 0.35) { this.state = 'strike'; this.strikeT = 0; }
-        break;
-      }
-      case 'strike':
-        this.strikeT += dt;
-        if (this.strikeT > 0.12 && this.prey && !this.prey.eaten) { this.prey.eaten = true; this.world.eat(this.prey); }
-        if (this.strikeT > 0.45) { this.state = 'swallow'; this.timer = 2.4; d.hunger = Math.max(0, d.hunger - 35); }
-        break;
-      case 'swallow':
-        if (this.timer < 0) { this.prey = null; this.state = 'rest'; this.timer = 4 + Math.random() * 4; }
-        break;
-    }
+    if (this.data.feedSpot) this.remember('feedSpot', new THREE.Vector3(...this.data.feedSpot), 2, 8);
+    for (const m of this.mem.places) m.value = Math.min(m.value, 3);
   }
 
-  headPos(out) {
-    const k = 4.4 * this.data.size;
-    return out.set(this.pos.x + Math.sin(this.heading) * k, this.pos.y + 0.6 * this.data.size, this.pos.z + Math.cos(this.heading) * k);
+  // ---------------------------------------------------------------- algı
+  sense(dt) {
+    const w = this.world;
+    this.forget(dt, 0.0003);
+    const head = this.headPos(_hp);
+    // gözler başın üst-yanında: görüş alanı yukarıyı da kapsar (yukarıdan yaklaşan gölge)
+    const fwd = _fw.set(Math.sin(this.heading), 0.55, Math.cos(this.heading)).normalize();
+    // 1) görme: amfibi gözü hareket eden küçük nesnelere duyarlı; su tanenli → menzil kısa
+    senseVision(this, head, fwd, { ...VISION, range: this.inWater ? 12 : 18 });
+    // 2) yan çizgi (yalnızca suda) ve karada zemin titreşimi (iç kulak / bacaklar yoluyla)
+    senseVibration(this, head, { water: { lambda: 5, gain: 1, thresh: 0.04 }, ground: { lambda: 4, gain: 0.8, thresh: 0.05 } }, { water: this.inWater ? 1 : 0, ground: this.inWater ? 0.2 : 1 });
+    // 3) koku: yiyeceğin çevresine yayılan koku alanı; iki burun deliği arasındaki farkla yön
+    this.smell(head);
+    this.classify(head);
   }
 
-  // ---------------------------------------------------------------- Hareket
-  update(dt) {
-    dt = Math.min(dt, 0.05);
+  odorAt(p) {
+    let c = 0, src = null, best = 0;
+    for (const e of this.eco.entities) {
+      if (!e.scent || e.eaten || e.alive === false) continue;
+      const wet = e.pos.y < this.world.waterY - 0.1;
+      if (wet !== this.inWater) continue;                    // su altı kokusu havaya, hava kokusu suya geçmez
+      const age = Math.max(0, this.eco.time - (e.t0 ?? 0));
+      const L = wet ? Math.min(25, 1.5 + 3 * Math.sqrt(age / 10)) : 3;    // suda difüzyonla genişler
+      const k = e.scent * Math.exp(-p.distanceTo(e.pos) / L) * Math.sqrt(2 / L);
+      c += k;
+      if (k > best) { best = k; src = e; }
+    }
+    return [c, src];
+  }
+
+  smell(head) {
+    const left = _lv.set(Math.cos(this.heading), 0, -Math.sin(this.heading)).multiplyScalar(0.7);
+    const [c, src] = this.odorAt(head);
+    const thr = 0.04 * (1.5 - this.traits.olfaction);
+    if (c < thr || !src) { this.odor = null; return; }
+    const [cl] = this.odorAt(_q1.copy(head).add(left));
+    const [cr] = this.odorAt(_q1.copy(head).sub(left));
+    this.odor = { conc: c, side: (cl - cr) / (cl + cr + 1e-6), src };
+    // gözlem paneli için: koku tek başına konum vermez, yalnızca yoğunluk ve yan farkı
+    this.perceive(src, 'koku', src.pos, Math.min(0.5, c), { odorOnly: true });
+  }
+
+  classify(head) {
+    this.prey = null; this.threat = null; this.threatLevel = 0;
+    let bp = 0;
+    for (const p of this.percepts.values()) {
+      const e = p.e;
+      p.dist = p.pos.distanceTo(head);
+      if (!e) { p.role = 'önemsiz'; p.why = 'kaynağı belirsiz su hareketi'; continue; }
+      if (e.kind === 'worm') {
+        p.role = 'av';
+        // yeni bir yiyeceği ilk fark ettiği an: yem saati ve yeri öğrenilir (koşullanma)
+        if (!this.knownFood.has(e.id)) { this.knownFood.add(e.id); if (this.eco.time - (e.t0 ?? 0) < 40) this.learnFeeding(e.pos); }
+        // konumu bilmek için görme / yan çizgi ya da çok yakın koku gerekir
+        const located = p.senses.has('görme') || p.senses.has('titreşim:water') || (p.info.odorOnly && p.dist < 2.5);
+        p.why = located ? 'yerini biliyor' : 'yalnızca kokusu var: yönü kestiriliyor';
+        if (!located || e.eaten || e.captured) continue;
+        const s = p.conf / (1 + p.dist * 0.05);
+        if (s > bp) { bp = s; this.prey = p; }
+      } else if (e.kind === 'hand' || e.kind === 'big') {
+        p.role = 'tehdit';
+        const t = (1 - THREE.MathUtils.smoothstep(p.dist, 3, 14)) * p.conf;
+        p.why = 'büyük, hızla yaklaşan nesne';
+        if (t > this.threatLevel) { this.threatLevel = t; this.threat = p; }
+      } else { p.role = 'önemsiz'; p.why = ''; }
+    }
+    if (this.threat) this.remember('danger', this.threat.pos, this.threatLevel, 6);
+  }
+
+  // ---------------------------------------------------------------- öğrenme: yem saati ve yeri
+  learnFeeding(pos) {
+    const h = Math.floor((this.world.state.minutes / 60) % 24);
+    const H = this.data.feedHours;
+    for (let i = 0; i < 24; i++) H[i] *= 0.97;
+    H[h] += 1;
+    this.remember('feedSpot', pos, 1, 8);
+  }
+  feedExpectation() {
+    const H = this.data.feedHours;
+    const tot = H.reduce((a, b) => a + b, 0);
+    if (tot < 2) return 0;
+    const hr = (this.world.state.minutes / 60) % 24;
+    const h = Math.floor(hr), nx = (h + 1) % 24;
+    // yem saatinden biraz önce başlayan beklenti
+    return Math.min(1, (H[h] * 0.6 + H[nx] * (hr - h)) / (tot * 0.3));
+  }
+
+  // ---------------------------------------------------------------- hareket komutları (eylemler kullanır)
+  goTo(p, speed, arrive = 1) {
+    const d = Math.hypot(p.x - this.pos.x, p.z - this.pos.z);
+    this.mv.to = d > arrive ? p : null; this.mv.face = null;
+    this.mv.speed = d > arrive ? speed : 0;
+    this.mv.depth = this.inWater ? (this.mv.depth === 'bottom' ? 'bottom' : 'cruise') : 'cruise';
+    return d;
+  }
+  halt(depth = 'cruise') { this.mv.to = null; this.mv.face = null; this.mv.speed = 0; this.mv.depth = depth; }
+  face(p) { this.mv.to = null; this.mv.face = p; this.mv.speed = 0; }
+  angleTo(p) { return wrap(Math.atan2(p.x - this.pos.x, p.z - this.pos.z) - this.heading); }
+  randomSpot(water) {
     const w = this.world;
-    const d0 = this.data;
-    d0.hunger = Math.min(100, d0.hunger + dt * 0.02);
+    for (let k = 0; k < 40; k++) {
+      const x = (this.rand() - 0.5) * (w.w - 18), z = (this.rand() - 0.5) * (w.d - 16);
+      if ((w.depthAt(x, z) > 2) !== water || w.blocked(x, z, 3)) continue;
+      return new THREE.Vector3(x, 0, z);
+    }
+    return new THREE.Vector3(-11, 0, 11);
+  }
+
+  // ---------------------------------------------------------------- yaşam
+  metabolism(dt) {
+    const N = this.needs, d = this.data, w = this.world;
+    const q = this.q, act = 1 + Math.min(2, this.speed * 0.25);
+    N.energy = Math.max(0, N.energy - dt * 0.012 * q * act);
+    // akciğer: suda azalır (deri solunumu yavaşlatır), sıcakta ve hareketle hızlanır
+    if (this.inWater) N.oxygen = Math.max(0, N.oxygen - dt * 0.55 * q * act);
+    else N.oxygen = Math.min(100, N.oxygen + dt * 20);
+    // deri nemi: karada ortam nemine bağlı kurur, suda hemen ıslanır
+    if (this.inWater) N.moisture = Math.min(100, N.moisture + dt * 3);
+    else N.moisture = Math.max(0, N.moisture - dt * 0.0012 * (100 - w.humidity) * q * 3);
+    N.fatigue = THREE.MathUtils.clamp(N.fatigue + (this.speed > 3 ? dt * 0.8 : -dt * 0.4), 0, 100);
+    N.stress = Math.max(0, N.stress + (this.threatLevel * 25 - 2 + (w.temperature > 25 ? 3 : 0)) * dt);
+    if (N.energy <= 0 || N.moisture < 10 || N.oxygen <= 0) N.health = Math.max(0, N.health - dt * 0.05);
+    else N.health = Math.min(100, N.health + dt * 0.01);
+    // deri değiştirme: birkaç günde bir, tok ve sağlıklıyken
+    if (!this.sh) d.shed = Math.min(1, d.shed + dt / (1440 * 3.5) * q * (N.energy > 30 ? 1 : 0.3));
     // çok yavaş büyüme (1 sn = 1 oyun dakikası): tokken birkaç oyun haftasında yetişkin boyuna ulaşır
-    if (d0.size < d0.adultSize && d0.hunger < 60) d0.size = Math.min(d0.adultSize, d0.size + (d0.adultSize - d0.size) * 0.004 * dt / 60);
-    this.root.scale.setScalar(d0.size);
-    this.think(dt);
+    if (d.size < d.adultSize && N.energy > 40) d.size = Math.min(d.adultSize, d.size + (d.adultSize - d.size) * 0.004 * dt / 60);
+    d.hunger = 100 - N.energy;
+    const resting = this.brain.current?.id === 'rest';
+    this.restless = THREE.MathUtils.clamp(this.restless + (resting ? dt / (w.night ? 50 : 160) : -dt / 25), 0, 1);
+  }
 
+  update(dt, lod = 0) {
+    dt = Math.min(dt, 0.05);
+    this.metabolism(dt);
+    this.root.scale.setScalar(this.data.size);
+    const prevState = this.state;
+    this.state = null;
+    this.brain.tick(this, dt);
+    this.move(dt);
+    this.watchdog(dt);
+    if (!this.state) {
+      if (this.inWater) this.state = this.speed > 0.4 ? 'swim' : this.mv.depth === 'bottom' ? 'rest' : 'swim';
+      else this.state = this.speed > 0.12 || Math.abs(this.yawRate) > 0.15 ? 'walk' : 'rest';
+    }
+    if (this.state !== prevState && this.state === 'strike') this.strikeT = 0;
+    if (lod < 2) this.animate(dt);
+    this.place();
+  }
+
+  move(dt) {
+    const w = this.world, mv = this.mv;
     const depth = w.depthAt(this.pos.x, this.pos.z);
     this.swimBlend += ((depth > 1.6 ? 1 : depth < 0.9 ? 0 : this.swimBlend) - this.swimBlend) * Math.min(1, dt * 2.5);
-
-    // hedef hız ve yön
-    let want = 0;
     const st = this.state;
-    const tx = this.target.x - this.pos.x, tz = this.target.z - this.pos.z;
-    let turnTo = Math.atan2(tx, tz);
-    if (st === 'walk') want = 1.7;
-    else if (st === 'swim') want = 4.5;
-    else if (st === 'stalk') {
-      const dist = Math.hypot(tx, tz);
-      want = this.inWater ? Math.min(3, dist * 0.8) : Math.min(1.3, dist * 0.5);
-      if (dist < 6 && dist > 4.2) want *= 0.35;            // dikkatle süzülerek yaklaşma
-    } else if (st === 'air') want = this.pos.y > w.waterY - 1.2 ? 0 : 1.2;
-    else if (st === 'strike') want = this.strikeT < 0.15 ? 9 : 0;
+    const actQ = THREE.MathUtils.clamp(this.q, 0.4, 1.3) * (this.needs.health < 30 ? 0.5 : 1);
+    let want = mv.speed * (st === 'strike' ? 1 : actQ);
+    let turnTo = this.heading;
+    const goal = mv.to ?? mv.face;
+    if (goal) { turnTo = Math.atan2(goal.x - this.pos.x, goal.z - this.pos.z); this.aim.copy(goal); }
+    else this.aim.set(this.pos.x + Math.sin(this.heading) * 5, 0, this.pos.z + Math.cos(this.heading) * 5);
 
-    // engellerden ve camdan kaçınma
-    const ahead = _v.set(this.pos.x + Math.sin(this.heading) * 4, 0, this.pos.z + Math.cos(this.heading) * 4);
-    if (w.blocked(ahead.x, ahead.z, 1) && st !== 'strike') turnTo = this.heading + 1.2;
+    // engellerden ve camdan kaçınma: istenen yön kapalıysa ona en yakın açık yönü seç;
+    // seçilen tarafa bir süre bağlı kal (iki yön arasında titreyip kilitlenmesin)
+    if (want > 0 && st !== 'strike') {
+      const free = (a) => !w.blocked(this.pos.x + Math.sin(a) * 4, this.pos.z + Math.cos(a) * 4, 1) && !w.blocked(this.pos.x + Math.sin(a) * 2, this.pos.z + Math.cos(a) * 2, 1);
+      this.detourT = Math.max(0, (this.detourT ?? 0) - dt);
+      if (!free(turnTo)) {
+        const sgn = this.detourT > 0 ? this.detourSign : (wrap(turnTo - this.heading) >= 0 ? 1 : -1);
+        let found = null;
+        for (const k of [0.45, 0.9, 1.35, 1.8, 2.4]) {
+          if (free(turnTo + sgn * k)) { found = turnTo + sgn * k; this.detourSign = sgn; break; }
+          if (this.detourT <= 0 && free(turnTo - sgn * k)) { found = turnTo - sgn * k; this.detourSign = -sgn; break; }
+        }
+        if (found !== null) { turnTo = found; if (this.detourT <= 0) this.detourT = 1.5; }
+      }
+    }
     const err = wrap(turnTo - this.heading);
-    const turnRate = this.inWater ? 1.8 : 0.9;
+    const turnRate = (this.inWater ? 1.8 : 0.9) * actQ;
     const h0 = this.heading;
-    if (want > 0 || st === 'stalk') this.heading += THREE.MathUtils.clamp(err, -turnRate * dt, turnRate * dt);
+    if (goal || want > 0) this.heading += THREE.MathUtils.clamp(err, -turnRate * dt, turnRate * dt);
     // yerinde dönerken de ayaklar adım atar: dönüş hızını yürüme hızına çevir (ayak kayması olmasın)
     this.yawRate = (this.heading - h0) / Math.max(dt, 1e-4);
     if (Math.abs(err) > 1.2 && st !== 'strike') want *= 0.25;   // önce yerinde dön
@@ -259,8 +363,8 @@ export class Newt {
     const ground = w.ground(this.pos.x, this.pos.z);
     if (this.swimBlend > 0.5) {
       let ty = THREE.MathUtils.clamp(ground + 1.5 + Math.sin(this.swimPhase * 0.13) * 0.6, ground + 0.4, w.waterY - 1.1);
-      if (st === 'air') ty = w.waterY - 0.55;
-      if (st === 'rest' || st === 'hide') ty = ground + 0.05;       // dipte dinlenir
+      if (mv.depth === 'surface') ty = w.waterY - 0.55;
+      if (mv.depth === 'bottom') ty = ground + 0.05;
       this.vy += ((ty - this.pos.y) * 2 - this.vy) * Math.min(1, dt * 2);
       this.pos.y += this.vy * dt;
       this.pos.y = Math.max(this.pos.y, ground);
@@ -278,9 +382,39 @@ export class Newt {
     const lx = -fz, lz = fx;
     const side = Math.atan2(w.ground(this.pos.x + lx * 1.2, this.pos.z + lz * 1.2) - w.ground(this.pos.x - lx * 1.2, this.pos.z - lz * 1.2), 2.4);
     this.roll += ((this.swimBlend > 0.5 ? 0 : side) - this.roll) * Math.min(1, dt * 4);
+  }
 
-    this.animate(dt);
-    this.place();
+  // takılma bekçisi: hedefe 15 sn boyunca hiç yaklaşamıyorsa eylemi bırakıp yeniden karar ver
+  watchdog(dt) {
+    const to = this.mv.to;
+    if (!to || this.mv.speed <= 0) { this.wd = null; return; }
+    const d = Math.hypot(to.x - this.pos.x, to.z - this.pos.z);
+    if (!this.wd || this.wd.to !== to) this.wd = { to, best: d, t: 0 };
+    if (d < this.wd.best - 0.5) { this.wd.best = d; this.wd.t = 0; } else this.wd.t += dt;
+    if (this.wd.t > 15) {
+      this.wd = null;
+      const a = this.brain.current;
+      if (a) { a.end?.(this, null); this.brain.current = null; this.brain.history.unshift({ t: this.eco.time, id: a.id, why: 'yol bulamadı', end: true }); }
+      this.heading += (this.rand() - 0.5) * 2;
+      this.brain.decide(this);
+    }
+  }
+
+  headPos(out) {
+    const k = 4.4 * this.data.size;
+    return out.set(this.pos.x + Math.sin(this.heading) * k, this.pos.y + 0.6 * this.data.size, this.pos.z + Math.cos(this.heading) * k);
+  }
+
+  inspect() {
+    const o = super.inspect();
+    const d = this.data, N = this.needs;
+    o.meta = [
+      `${d.sex === 'F' ? 'Dişi' : 'Erkek'} · ${this.size.toFixed(1)} cm${d.size < d.adultSize - 0.01 ? ' (büyüyor)' : ''} · ${this.inWater ? 'suda' : 'karada'} · sıcaklık etkisi ×${this.q.toFixed(2)}`,
+      `Deri değişimi %${Math.round(d.shed * 100)} · yem beklentisi %${Math.round(this.feedExpectation() * 100)}${this.odor ? ` · koku ${(this.odor.conc * 100) | 0} (${this.odor.side > 0.02 ? 'solda' : this.odor.side < -0.02 ? 'sağda' : 'önde'})` : ''}`,
+      `Kişilik: etkinlik ${(this.traits.activity * 100) | 0} · cesaret ${(this.traits.boldness * 100) | 0} · karaya eğilim ${(this.traits.terrestrial * 100) | 0} · koku duyarlılığı ${(this.traits.olfaction * 100) | 0}`,
+    ];
+    o.bars = [['Tokluk', N.energy, N.energy < 25], ['Oksijen', N.oxygen, N.oxygen < 20], ['Deri nemi', N.moisture, N.moisture < 35], ['Stres', N.stress, N.stress > 60], ['Sağlık', N.health, N.health < 50]];
+    return o;
   }
 
   // Gövdenin hiçbir noktası cama ya da engellere girmesin: burun, gövde, bacaklar, kuyruk ucu
@@ -334,7 +468,7 @@ export class Newt {
     // --- yüzme: kuyruktan geriye akan dalga, bacaklar gövdeye yapışık
     const swimF = 0.6 + Math.abs(this.speed) * 0.35 + (st === 'air' ? 0.6 : 0);
     this.swimPhase += swimF * dt * Math.PI * 2 * Math.max(sb, 0.001);
-    const swimAmp = sb * (st === 'rest' || st === 'hide' ? 0.15 : 0.35 + Math.min(this.speed, 5) * 0.06);
+    const swimAmp = sb * (st === 'rest' ? 0.15 : 0.35 + Math.min(this.speed, 5) * 0.06);
 
     // gövde (omurga) — kara: tek kavis (C) salınımı; su: geriye ilerleyen dalga
     const bend = 0.1 * moving * Math.cos(p2);   // önde olan ön ayağın tarafı dışbükey
@@ -347,9 +481,18 @@ export class Newt {
       return a;
     });
     // gövde dönüşü (yön değiştirirken kıvrılma)
-    const turn = THREE.MathUtils.clamp(wrap(Math.atan2(this.target.x - this.pos.x, this.target.z - this.pos.z) - this.heading), -1, 1) * (this.speed > 0.2 ? 0.035 : 0.02);
+    const turn = THREE.MathUtils.clamp(wrap(Math.atan2(this.aim.x - this.pos.x, this.aim.z - this.pos.z) - this.heading), -1, 1) * (this.speed > 0.2 ? 0.035 : 0.02);
+    // unken refleksi: gövde yukarı kavis, baş ve kuyruk kalkar; karın (turuncu) görünür hale gelir
+    this.unkenW += ((st === 'unken' ? 1 : 0) - this.unkenW) * Math.min(1, dt * 2.5);
+    const uk = smooth(this.unkenW);
+    const shedW = st === 'shed' ? 1 : 0;
     this.bendSmooth += (turn - this.bendSmooth) * Math.min(1, dt * 3);
-    TRUNK.forEach((n, i) => { if (i) j[n].rot(UP, trunkAngles[i] - this.bendSmooth); });
+    TRUNK.forEach((n, i) => {
+      if (!i) return;
+      const t = i / (TRUNK.length - 1);
+      j[n].rot(UP, trunkAngles[i] - this.bendSmooth + shedW * 0.09 * Math.sin((this.shedPhase ?? 0) * 2.2 - t * 3));
+      if (uk > 0.001) j[n].rot(LAT, UNKEN * uk * 0.07 * Math.sin(Math.PI * t));
+    });
     // omuz kuşağı kökte: gövde orta hattı düz kalsın diye yarısını geri çevir
     const rootYaw = -total * 0.5 + this.bendSmooth * 3;
     j[TRUNK[0]].rot(UP, rootYaw);
@@ -360,6 +503,7 @@ export class Newt {
       const land = moving * 0.06 * Math.sin(p2 - 1.2 - t * 2.2) + 0.02 * Math.sin(this.breath * 0.4 + t * 3) * lb;
       const water = swimAmp * (0.25 + t * 0.9) * Math.sin(this.swimPhase - 1.6 - t * 3.2) * 0.42;
       j[n].rot(UP, land + water - this.bendSmooth * 0.6);
+      if (uk > 0.001) { j[n].rot(LAT, UNKEN * uk * (0.03 + t * 0.13)); j[n].rot(UP, uk * 0.08 * t * Math.sin(this.breath * 2.2 - t * 4)); }
     });
 
     // bacaklar
@@ -392,31 +536,38 @@ export class Newt {
     lk.timer -= dt;
     if (lk.timer < 0) {
       lk.timer = 1.5 + Math.random() * 4;
-      const idle = st === 'rest' || st === 'hide';
+      const idle = st === 'rest';
       lk.tyaw = idle ? (Math.random() - 0.5) * 0.7 : (Math.random() - 0.5) * 0.25;
       lk.tpitch = idle ? (Math.random() - 0.4) * 0.25 : 0;
     }
-    if (this.prey && (st === 'stalk' || st === 'strike')) {
-      const a = wrap(Math.atan2(this.prey.pos.x - this.pos.x, this.prey.pos.z - this.pos.z) - this.heading);
+    const tgt = this.ht?.pos;
+    if (tgt && (st === 'stalk' || st === 'strike')) {
+      const a = wrap(Math.atan2(tgt.x - this.pos.x, tgt.z - this.pos.z) - this.heading);
       lk.tyaw = THREE.MathUtils.clamp(a, -0.6, 0.6);
       lk.tpitch = this.inWater ? 0 : 0.2;
-    }
+    } else if (this.sniffing) {
+      // koklarken burun aşağıda, baş yavaşça iki yana
+      lk.tyaw = Math.sin(this.breath * 1.3) * 0.4 * this.sniffing;
+      lk.tpitch = 0.18 * this.sniffing;
+    } else if (this.lookUp) { lk.tyaw = 0; lk.tpitch = -0.3; }
+    if (st === 'shed') { lk.tyaw = Math.sin((this.shedPhase ?? 0) * 2.6) * 0.35; lk.tpitch = 0.25; }
     // bakış ani değil: semender başını yavaş, kesik kesik çevirir
     lk.yaw += (lk.tyaw - lk.yaw) * Math.min(1, dt * 2.2);
     lk.pitch += (lk.tpitch - lk.pitch) * Math.min(1, dt * 2.2);
     const head = j.Bone019_129;
-    head.rot(UP, rootYaw * 0.8 + lk.yaw);
+    head.rot(UP, rootYaw * 0.8 + lk.yaw + Math.sin(this.breath * 13) * 0.3 * (this.headShake ?? 0));
     let strikeDip = 0;
     if (st === 'strike') {
       const s = this.strikeT;
       strikeDip = s < 0.12 ? s / 0.12 : Math.max(0, 1 - (s - 0.12) / 0.3);
     }
-    head.rot(LAT, -(lk.pitch + strikeDip * 0.35) + (st === 'air' ? 0.25 : 0));
+    head.rot(LAT, -(lk.pitch + strikeDip * 0.35) + (st === 'air' ? 0.25 : 0) - uk * UNKEN * 0.45);
 
     // çene: avda açılıp kapanır, yutarken yutkunur, yüzeyde hava yutar; gırtlak pompası sürekli
     let jaw = 0.012 * (0.5 + 0.5 * Math.sin(this.breath * 9));            // bukkal pompalama
     if (st === 'strike') jaw = this.strikeT < 0.1 ? 0.32 * (this.strikeT / 0.1) : Math.max(0, 0.32 - (this.strikeT - 0.1) * 3);
-    if (st === 'swallow') jaw = Math.max(0, Math.sin((2.4 - this.timer) * 5)) * 0.05;
+    if (st === 'swallow') jaw = Math.max(0, Math.sin(this.swallowT * 5)) * 0.05;
+    if (st === 'shed') jaw = Math.max(0, Math.sin((this.shedPhase ?? 0) * 3.1)) * 0.08;
     if (st === 'air' && this.pos.y > this.world.waterY - 0.8) jaw = Math.max(0, Math.sin(this.breath * 3)) * 0.22;
     this.jaw += (jaw - this.jaw) * Math.min(1, dt * 25);
     j.Bone020_120.rot(LAT, -this.jaw);

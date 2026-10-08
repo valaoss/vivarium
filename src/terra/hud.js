@@ -1,5 +1,5 @@
 import { icon, h } from '../ui/hud.js';
-import { NEWT_LABEL } from './Newt.js';
+import { createObserver } from './observer.js';
 
 export function createTerraHUD(terra, root) {
   root.innerHTML = '';
@@ -22,6 +22,7 @@ export function createTerraHUD(terra, root) {
     </div>`);
   const right = h(`
     <div class="right-tools">
+      <button data-act="observe">${icon('scope')}<span>Gözlem</span></button>
       <button data-act="aqua">${icon('fish')}<span>Akvaryum</span></button>
     </div>`);
   dock.append(tools, h('<div class="dock-sep"></div>'), right);
@@ -40,6 +41,7 @@ export function createTerraHUD(terra, root) {
   root.appendChild(toasts);
   const hint = h('<div class="mode-hint hidden"></div>');
   root.appendChild(hint);
+  const obs = createObserver(terra, root);
 
   const setMode = (m) => {
     terra.mode = m;
@@ -59,8 +61,9 @@ export function createTerraHUD(terra, root) {
     location.reload();
   });
 
+  right.querySelector('[data-act="observe"]').addEventListener('click', (e) => { obs.toggle(); e.currentTarget.classList.toggle('on', obs.on); card.classList.toggle('hidden', obs.on || !selected); });
   let selected = null;
-  terra.on('select', (n) => { selected = n; card.classList.toggle('hidden', !n); });
+  terra.on('select', (n) => { selected = n; card.classList.toggle('hidden', !n || obs.on); });
   card.querySelector('.x').addEventListener('click', () => { selected = null; card.classList.add('hidden'); });
   terra.on('toast', ({ text, kind }) => {
     const t = h(`<div class="toast glass ${kind}">${text}</div>`);
@@ -73,6 +76,7 @@ export function createTerraHUD(terra, root) {
   let acc = 0;
   return {
     update(dt) {
+      obs.update(dt);
       acc += dt;
       if (acc < 0.25) return;
       acc = 0;
@@ -85,13 +89,13 @@ export function createTerraHUD(terra, root) {
       hum.querySelector('i').style.width = `${s.humidity}%`;
       hum.querySelector('.pct').textContent = `%${Math.round(s.humidity)}`;
       hum.classList.toggle('warn', s.humidity < 55 || s.humidity > 95);
-      top.querySelector('.temp span').textContent = `${(terra.night ? 18.5 : 21.5).toFixed(1)}°C`;
+      top.querySelector('.temp span').textContent = `${terra.temperature.toFixed(1)}°C`;
       if (selected) {
         const n = selected;
         card.querySelector('.cname').textContent = n.data.name;
         const cm = 11 * n.data.size;
-        card.querySelector('.cstate').textContent = `${NEWT_LABEL[n.state] ?? ''} · ${cm.toFixed(1)} cm${n.data.size < n.data.adultSize - 0.01 ? ' · büyüyor' : ''}`;
-        card.querySelector('[data-b="food"]').style.width = `${100 - n.data.hunger}%`;
+        card.querySelector('.cstate').textContent = `${n.brain.current?.label ?? 'Duruyor'} · ${cm.toFixed(1)} cm${n.data.size < n.data.adultSize - 0.01 ? ' · büyüyor' : ''}`;
+        card.querySelector('[data-b="food"]').style.width = `${n.needs.energy}%`;
       }
     },
   };

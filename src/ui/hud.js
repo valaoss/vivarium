@@ -33,6 +33,9 @@ const I = {
   fish: '<path d="M3 12c3-4 8-5 12-3l4-3v12l-4-3c-4 2-9 1-12-3z"/><circle cx="8" cy="11" r="0.8"/>',
   mist: '<path d="M7 4h6v4H7z"/><path d="M13 6h3"/><path d="M18 4.5l2-1M18 6h3M18 7.5l2 1"/><path d="M9 8v3c0 1-2 2-2 4v5h6v-5c0-2-2-3-2-4V8"/>',
   drop: '<path d="M12 3s6 6.5 6 11a6 6 0 0 1-12 0c0-4.5 6-11 6-11z"/>',
+  spider: '<ellipse cx="12" cy="10" rx="2.2" ry="2.6"/><ellipse cx="12" cy="15.5" rx="2.6" ry="3.2"/><path d="M10 9L5 5M14 9l5-4M10 11l-6 0M14 11h6M10 13l-5 4M14 13l5 4M10.5 15l-3 6M13.5 15l3 6"/>',
+  cricket: '<ellipse cx="11" cy="13" rx="5.5" ry="2.6"/><circle cx="17.2" cy="12" r="1.6"/><path d="M18 10.6l3-5M17.6 10.5l1-6M8 14.5l-3 5M9 11l-1-4 3 2M13 15l1 4"/>',
+  scope: '<circle cx="11" cy="11" r="6"/><path d="M15.5 15.5L21 21M11 8v6M8 11h6"/>',
 };
 export const icon = (n, cls = '') => `<svg class="ic ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${I[n]}</svg>`;
 export const h = (html) => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; };

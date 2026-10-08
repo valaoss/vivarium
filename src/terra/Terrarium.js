@@ -5,6 +5,7 @@ import { createRenderer, createCamera, createControls, createRoom } from '../ren
 import { pbrSet } from '../render/assets.js';
 import { fbm3, mulberry } from '../render/textures.js';
 import { Newt, loadNewt } from './Newt.js';
+import { Ecosystem } from '../eco/Ecosystem.js';
 
 // Exo Terra tarzı 60 × 45 × 45 cm cam teraryum; içinde yarı karasal semender için gölet
 const W = 60, D = 45, H = 45;
@@ -41,6 +42,8 @@ export class Terrarium {
     this.w = W; this.d = D; this.waterY = WATER_Y;
     this.obstacles = [];
     this.night = false;
+    this.eco = new Ecosystem(this);
+    this.speedMul = 1;
 
     this.buildEnclosure();
     this.buildGround();
@@ -158,7 +161,7 @@ export class Terrarium {
       const h = groundHeight(x, z);
       p.setY(i, h);
       // su altı ve kıyı: ıslak, koyu; göletin dibi çamurlu çakıl tonu
-      const wet = THREE.MathUtils.smoothstep(WATER_Y + 1.2, WATER_Y - 0.2, h);
+      const wet = 1 - THREE.MathUtils.smoothstep(h, WATER_Y - 0.2, WATER_Y + 1.2);
       const k = 1 - wet * 0.55;
       col[i * 3] = k * (1 - wet * 0.1); col[i * 3 + 1] = k; col[i * 3 + 2] = k * (1 + wet * 0.05);
     }
@@ -198,23 +201,31 @@ export class Terrarium {
     const mat = new THREE.MeshPhysicalMaterial({
       color: 0x1e2a1a, roughness: 0.04, metalness: 0, transparent: true, opacity: 0.38, clearcoat: 1, envMapIntensity: 1.6, depthWrite: false,
     });
-    this.ripple = { value: new THREE.Vector4(0, 0, -100, 0) };
+    this.ripples = { value: Array.from({ length: 12 }, () => new THREE.Vector4(0, 0, -100, 0)) };
+    this.ripI = 0;
     mat.onBeforeCompile = (sh) => {
       sh.uniforms.uTime = this.waterTime = { value: 0 };
-      sh.uniforms.uRipple = this.ripple;
+      sh.uniforms.uRip = this.ripples;
       sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vWp;').replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\nvWp = (modelMatrix * vec4(transformed, 1.0)).xyz;');
       sh.fragmentShader = sh.fragmentShader
         .replace('#include <common>', `#include <common>
-          uniform float uTime; uniform vec4 uRipple; varying vec3 vWp;
+          uniform float uTime; uniform vec4 uRip[12]; varying vec3 vWp;
           float wv(vec2 p, float t) { return sin(p.x * 0.9 + t * 1.1) * 0.5 + sin(p.y * 1.3 - t * 0.8) * 0.4 + sin((p.x + p.y) * 2.1 + t * 1.7) * 0.2; }`)
         .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
           {
             vec2 p = vWp.xz; float t = uTime;
             float e = 0.15;
-            float d = length(p - uRipple.xy); float age = uTime - uRipple.z;
-            float ring = uRipple.w * exp(-age * 1.5) * sin(d * 4.0 - age * 9.0) * smoothstep(age * 6.0 + 1.0, age * 6.0 - 2.0, d);
             vec2 g = vec2(wv(p + vec2(e, 0.0), t) - wv(p - vec2(e, 0.0), t), wv(p + vec2(0.0, e), t) - wv(p - vec2(0.0, e), t)) * 0.02 / e;
-            g += normalize(p - uRipple.xy + 0.0001) * ring * 0.15;
+            // halkalar: küçük kaynaklarda sık ve hızlı sönen, büyüklerde geniş dalga
+            for (int i = 0; i < 12; i++) {
+              vec4 R = uRip[i];
+              float age = uTime - R.z;
+              if (age < 0.0 || age > 4.0) continue;
+              float d = length(p - R.xy);
+              float k = 7.0 / (0.4 + R.w);
+              float ring = R.w * exp(-age * (2.6 - R.w)) * sin(d * k - age * 11.0) * smoothstep(age * 5.0 + 0.6, age * 5.0 - 1.0, d);
+              g += normalize(p - R.xy + 0.0001) * ring * 0.18;
+            }
             normal = normalize(normal + (viewMatrix * vec4(-g.x, 0.0, -g.y, 0.0)).xyz);
           }`);
     };
@@ -322,7 +333,8 @@ export class Terrarium {
       this.fit(p, 0.5, true, 0.4);
       this.scene.add(p);
       const b = new THREE.Box3().setFromObject(p);
-      this.obstacles.push({ x: p.position.x, z: p.position.z, r: Math.min(b.max.x - b.min.x, b.max.z - b.min.z) * 0.32 });
+      // engel yalnızca gövde/kök kümesi; yapraklar üstten sarkar, altından geçilir
+      this.obstacles.push({ x: p.position.x, z: p.position.z, r: Math.min(2.6, Math.min(b.max.x - b.min.x, b.max.z - b.min.z) * 0.12), canopy: Math.min(b.max.x - b.min.x, b.max.z - b.min.z) * 0.4 });
       return p;
     };
     placePlant(part(fern, 'fern_02_b'), -20, -13, 30);
@@ -339,6 +351,7 @@ export class Terrarium {
     const d = this.state.newt;
     this.newt = new Newt(this, d.pos ? d : { ...d, pos: [-4, groundHeight(-4, 0), 0] });
     this.scene.add(this.newt.root);
+    this.eco.add(this.newt);
     this.emit('ready');
   }
 
@@ -370,13 +383,90 @@ export class Terrarium {
     worm.position.set(x, inWater ? WATER_Y - 0.2 : y + 0.15, z);
     worm.rotation.y = Math.random() * 6.28;
     this.scene.add(worm);
-    this.food.push({ pos: worm.position, mesh: worm, sink: inWater, eaten: false, phase: Math.random() * 6 });
-    if (inWater) this.ripple.value.set(x, z, this.waterTime?.value ?? 0, 1);
+    // ekosistem varlığı: hareket eder (görülür), koku yayar, suda kıvranırken su hareketi üretir
+    const f = { kind: 'worm', label: 'Solucan', pos: worm.position, mesh: worm, sink: inWater, eaten: false, phase: Math.random() * 6, size: 3.2, speed: 0.25, food: 30, scent: 1, t0: this.eco.time };
+    this.food.push(f);
+    this.eco.add(f);
+    if (inWater) this.ripple(worm.position, 1);
+    this.eco.vibrate(null, worm.position, inWater ? 'water' : 'ground', 0.6, 0.1, 0.1);   // düşüş: tek seferlik
   }
   eat(f) {
     this.scene.remove(f.mesh);
-    this.food.splice(this.food.indexOf(f), 1);
+    const i = this.food.indexOf(f);
+    if (i >= 0) this.food.splice(i, 1);
+    this.eco.remove(f);
+    f.eaten = true;
     this.state.fed++;
+  }
+  ripple(p, amp = 0.5) {
+    this.ripples.value[this.ripI].set(p.x, p.z, this.waterTime?.value ?? 0, Math.min(1.5, amp));
+    this.ripI = (this.ripI + 1) % this.ripples.value.length;
+  }
+  get temperature() { return this.temp ?? 20; }
+  get humidity() { return this.state.humidity; }
+  // gözlem testi: büyük, hızla yaklaşan bir nesne (el) — görülür ve zemin titreşimi yapar
+  pokeThreat(at) {
+    const p = (at ?? new THREE.Vector3()).clone();
+    const from = this.camera.position.clone().sub(p).setLength(13).add(p);    // el oyuncunun tarafından gelir
+    const hand = { kind: 'hand', label: 'El', pos: from, size: 9, speed: 25, t: 0 };
+    hand.to = p.clone().add(new THREE.Vector3(0, 1.5, 0));
+    this.eco.add(hand);
+    (this.hands ??= []).push(hand);
+  }
+  updateHands(dt) {
+    if (!this.hands?.length) return;
+    for (const h of this.hands) {
+      h.t += dt;
+      h.pos.lerp(h.to, Math.min(1, dt * 2.4));
+      h.speed = h.t < 1.5 ? 25 : 0;
+      const wet = h.pos.y < WATER_Y && groundHeight(h.pos.x, h.pos.z) < WATER_Y;
+      if (Math.random() < dt * 10) this.eco.vibrate(h, h.pos, wet ? 'water' : 'ground', 0.5, 0.2, 0.1);
+      if (wet && Math.random() < dt * 4) this.ripple(h.pos, 0.8);
+      if (h.t > 3) this.eco.remove(h);
+    }
+    this.hands = this.hands.filter((h) => h.alive);
+  }
+  // semenderin eski derisi: o anki pozun saydam kopyası; sonra semender onu yer
+  onNewtShed(n) {
+    const src = n.mesh;
+    n.root.updateMatrixWorld(true);
+    const g = src.geometry, pos = g.attributes.position;
+    const out = new Float32Array(pos.count * 3), v = new THREE.Vector3();
+    for (let i = 0; i < pos.count; i++) { src.getVertexPosition(i, v); v.applyMatrix4(src.matrixWorld); out.set([v.x, v.y, v.z], i * 3); }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(out, 3));
+    geo.setIndex(g.index);
+    geo.computeVertexNormals();
+    // buruşukluk: deri ince ve kırışık, yer yer içe çökmüş
+    const P = geo.attributes.position;
+    for (let i = 0; i < P.count; i++) {
+      const k = 0.12 * Math.sin(P.getX(i) * 9.1 + P.getZ(i) * 7.3) * Math.cos(P.getY(i) * 11.7);
+      P.setXYZ(i, P.getX(i) + k * 0.5, P.getY(i) + k * 0.6, P.getZ(i) - k * 0.4);
+    }
+    geo.computeBoundingBox();
+    const c = geo.boundingBox.getCenter(new THREE.Vector3());
+    // yerel çerçeve: +z semenderin baktığı yön; sıyrılırken deri kuyruğa doğru toplanır
+    geo.translate(-c.x, -c.y, -c.z);
+    geo.rotateY(-n.heading);
+    geo.computeVertexNormals();
+    const mat = new THREE.MeshStandardMaterial({ color: 0xbdb39c, roughness: 0.7, transparent: true, opacity: 0.38, side: THREE.DoubleSide, depthWrite: false });
+    const skin = new THREE.Mesh(geo, mat);
+    skin.position.copy(c);
+    skin.rotation.y = n.heading;
+    skin.scale.set(0.95, 0.7, 1);
+    this.scene.add(skin);
+    const tail = new THREE.Vector3(-Math.sin(n.heading), 0, -Math.cos(n.heading));
+    skin.userData.peel = (dt) => {
+      if (skin.scale.z > 0.42) { skin.scale.z -= dt * 0.07; skin.position.addScaledVector(tail, dt * 0.25); }
+    };
+    skin.userData.eat = (dt) => {
+      const h = n.headPos(new THREE.Vector3());
+      skin.position.lerp(h, Math.min(1, dt * 0.3));
+      skin.scale.multiplyScalar(1 - dt * 0.18);
+    };
+    skin.userData.done = () => { skin.removeFromParent(); geo.dispose(); mat.dispose(); };
+    this.toast(`${n.data.name} deri değiştiriyor: eski deri ağzından başlayarak sıyrılıyor. Çoğu semender derisini yer.`, 'good');
+    return skin;
   }
   spray() {
     this.state.humidity = Math.min(100, this.state.humidity + 18);
@@ -393,7 +483,9 @@ export class Terrarium {
       const mins = Math.min(12 * 60, (Date.now() - s.savedAt) / 60000);
       this.state.minutes += mins;
       this.state.humidity = Math.max(35, this.state.humidity - mins * 0.03);
-      this.state.newt.hunger = Math.min(100, (this.state.newt.hunger ?? 40) + mins * 0.02);
+      const nd = this.state.newt;
+      if (nd.needs) nd.needs.energy = Math.max(5, nd.needs.energy - mins * 0.012);
+      else nd.hunger = Math.min(100, (nd.hunger ?? 40) + mins * 0.012);
     }
   }
   save() {
@@ -405,7 +497,16 @@ export class Terrarium {
   // ---------------------------------------------------------------- Döngü
   update(dt) {
     dt = Math.min(dt, 0.1);
+    // simülasyon hızı (gözlem paneli): alt adımlara bölünür
+    const total = dt * this.speedMul;
+    const n = Math.min(12, Math.ceil(total / 0.05));
+    for (let i = 0; i < n; i++) this.step(total / n);
+    this.controls.update();
+  }
+
+  step(dt) {
     this.time += dt;
+    this.temp = THREE.MathUtils.lerp(this.temp ?? 20, (this.night ? 18.5 : 21.5) + (this.heatOffset ?? 0), Math.min(1, dt * 0.01));
     const s = this.state;
     s.minutes += dt;
     s.humidity = Math.max(30, s.humidity - dt * 0.012);
@@ -447,6 +548,7 @@ export class Terrarium {
     for (const f of this.food) {
       f.phase += dt;
       const m = f.mesh;
+      if (f.sink && Math.random() < dt * 3) this.eco.vibrate(f, f.pos, 'water', 0.45, 0.9, 1.2);
       m.userData.u.uTime.value = f.phase;
       if (f.sink) {
         const floor = groundHeight(f.pos.x, f.pos.z) + 0.15;
@@ -459,8 +561,8 @@ export class Terrarium {
         if (groundHeight(nx, nz) > WATER_Y && !this.blocked(nx, nz, -1.5)) { f.pos.x = nx; f.pos.z = nz; f.pos.y = groundHeight(nx, nz) + 0.12; } else m.rotation.y += dt * 1.2;   // su kenarında yavaşça geri döner
       }
     }
-    this.newt?.update(dt);
-    this.controls.update();
+    this.updateHands(dt);
+    this.eco.update(dt, this.camera);
   }
 
   renderFrame() { this.renderer.render(this.scene, this.camera); }
