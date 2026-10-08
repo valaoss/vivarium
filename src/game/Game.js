@@ -221,6 +221,33 @@ export class Game {
   }
 
   // ---------------------------------------------------------------- Varlıklar
+  // Sert dekor + bitki gövdeleri (balıklar yaprakların içinden geçmesin diye dikey silindirler)
+  allObstacles() {
+    const list = this.obstacles.slice();
+    for (const p of this.plants.plants) {
+      if (p.type === 'frogbit') continue;
+      const h = p.size?.h ?? (p.type === 'vallisneria' ? 20 * (0.35 + 0.65 * p.growth) : 8);
+      const r = p.size ? Math.max(1, p.size.r * 0.45) : 1.6;
+      list.push({ pos: new THREE.Vector3(p.x, p.y + h / 2, p.z), r: r + 1.5, core: r, h: h / 2 });
+    }
+    return list;
+  }
+
+  // Dikim yeri taşın, kökün, ekipmanın ya da başka bir bitkinin gövdesinin içine denk gelmesin
+  plantBlocked(type, x, z) {
+    if (type === 'frogbit') return null;
+    const floor = sandHeight(x, z);
+    for (const o of this.obstacles) {
+      if (o.pos.y - floor > (o.core ?? o.r) + 2) continue;          // yukarıdaki dallar engel değil
+      if (Math.hypot(x - o.pos.x, z - o.pos.z) < (o.core ?? o.r * 0.75) + 1) return 'Bu nokta taşa ya da köke çok yakın; bitki içinden geçerdi.';
+    }
+    for (const p of this.plants.plants) {
+      if (p.type === 'frogbit' || p.y > sandHeight(p.x, p.z) + 1) continue;
+      if (Math.hypot(x - p.x, z - p.z) < 2.6) return 'Burada zaten bir bitki var; biraz yana dik.';
+    }
+    return null;
+  }
+
   addPlant(type, x, z, opts = {}) {
     const p = this.plants.add(type, x, z, opts);
     return p;
@@ -770,7 +797,11 @@ export class Game {
       if (this.mode.startsWith('plant:')) {
         this.rayFromEvent(e);
         const h = _ray.intersectObject(this.substrate.sand, false)[0];
-        if (h) { this.ghost.position.copy(h.point).y += 0.15; this.ghost.visible = true; } else this.ghost.visible = false;
+        if (h) {
+          this.ghost.position.copy(h.point).y += 0.15;
+          this.ghost.visible = true;
+          this.ghost.material.color.set(this.plantBlocked(this.mode.slice(6), h.point.x, h.point.z) ? 0xff8a7a : 0xbfffd8);
+        } else this.ghost.visible = false;
       }
     });
     window.addEventListener('pointerup', (e) => {
@@ -798,6 +829,8 @@ export class Game {
       const type = this.mode.slice(6);
       const h = _ray.intersectObject(this.substrate.sand, false)[0];
       if (!h) return;
+      const why = this.plantBlocked(type, h.point.x, h.point.z);
+      if (why) { this.toast(why, 'warn'); return; }
       const price = PLANT_TYPES[type].price;
       if (this.state.coins < price) { this.toast('Yeterli bakım paran yok.', 'warn'); this.setMode('view'); return; }
       this.state.coins -= price;
@@ -879,7 +912,7 @@ export class Game {
     const world = {
       fish: this.creatures,
       food: this.food,
-      obstacles: this.obstacles,
+      obstacles: this.allObstacles(),
       night: this.night,
       o2: w.o2,
       plants: this.plants.plants,

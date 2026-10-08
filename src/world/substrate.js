@@ -177,7 +177,7 @@ function createRocks(group) {
     rock.castShadow = true;
     rock.receiveShadow = true;
     group.add(rock);
-    obstacles.push({ pos: new THREE.Vector3(d.x, base + d.sy * 0.4, d.z), r: Math.max(d.sx, d.sz) * 1.05, top: base + d.sy * 1.05, mesh: rock });
+    obstacles.push({ pos: new THREE.Vector3(d.x, base + d.sy * 0.4, d.z), r: Math.max(d.sx, d.sz) * 1.05, core: Math.max(d.sx, d.sz) * 0.95, top: base + d.sy * 1.05, mesh: rock });
   }
   loadScannedRocks(obstacles.map((o) => o.mesh));
   return obstacles;
@@ -261,7 +261,7 @@ function createDriftwood(group) {
     group.add(m);
     for (let k = 0; k <= 6; k++) {
       const c = curve.getPointAt(k / 6);
-      obstacles.push({ pos: c, r: radii[bi] * 2 + 1 });
+      obstacles.push({ pos: c, r: radii[bi] * 2 + 1, core: radii[bi] * 1.15 });
     }
     // uç kapakları
     const tip = new THREE.Mesh(new THREE.SphereGeometry(radii[bi] * 0.4, 8, 6), mat);
@@ -341,8 +341,8 @@ function createEquipment(group) {
     filterOut: new THREE.Vector3(filter.position.x, filter.position.y + 20.5, filter.position.z + 3.5),
     heaterLed: led,
     obstacles: [
-      { pos: new THREE.Vector3(filter.position.x, filter.position.y + 9, filter.position.z), r: 5 },
-      { pos: heater.position.clone(), r: 2.5 },
+      { pos: new THREE.Vector3(filter.position.x, filter.position.y + 11, filter.position.z), r: 5, core: 3.4, h: 12 },
+      { pos: heater.position.clone(), r: 2.5, core: 1.3, h: 11 },
     ],
   };
 }

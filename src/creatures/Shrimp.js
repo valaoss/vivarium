@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { HALF_W, HALF_D } from '../config.js';
+import { containGroup } from './contain.js';
 import { SPECIES } from './species.js';
 import { sandHeight } from '../world/substrate.js';
 import { patchUnderwater } from '../render/water.js';
@@ -329,6 +330,7 @@ export class Shrimp {
     const pitch = -Math.atan2(ahead - (ground - this.stand), 1) * 0.8;
     this.group.position.copy(this.pos);
     this.group.rotation.set(pitch, this.heading, 0, 'YXZ');
+    containGroup(this.group, this.pos);
     this.animate(dt, speed);
   }
 

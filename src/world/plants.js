@@ -4,7 +4,7 @@ import { patchUnderwater } from '../render/water.js';
 import { mulberry } from '../render/textures.js';
 import { sandHeight } from './substrate.js';
 import { buildFrogbit, buildLudwigia } from './proceduralPlants.js';
-import { TANK } from '../config.js';
+import { TANK, HALF_W, HALF_D } from '../config.js';
 
 export const PLANT_TYPES = {
   vallisneria: { name: 'Vallisneria', price: 6, desc: 'Uzun, şerit yapraklı çim bitkisi. Hızlı büyür, suyu temizler.', o2: 1.2, uptake: 1.3 },
@@ -284,6 +284,7 @@ export function createPlants(scene) {
       if (plant.model) {
         plant.model.scale.setScalar((MODEL_PLANTS[plant.type]?.size ?? 1) * (0.55 + 0.45 * plant.growth));
         plant.model.position.set(plant.x, plant.y, plant.z);
+        fitPlant(plant);
       }
       return;
     }
@@ -293,7 +294,8 @@ export function createPlants(scene) {
       e.set(leaf.tilt, leaf.yaw, leaf.roll, 'YXZ');
       q.setFromEuler(e);
       pos.set(plant.x + leaf.ox, plant.y + leaf.oy, plant.z + leaf.oz);
-      const len = leaf.len * (0.35 + 0.65 * g);
+      // yaprak su yüzeyini delmesin
+      const len = Math.min(leaf.len * (0.35 + 0.65 * g), TANK.water - 0.8 - plant.y - leaf.oy);
       scl.set(leaf.wid * (0.6 + 0.4 * g) * (plant.type === 'vallisneria' ? 1 : len), len, plant.type === 'vallisneria' ? 1 : len);
       m4.compose(pos, q, scl);
       pool.mesh.setMatrixAt(leaf.i, m4);
@@ -310,7 +312,11 @@ export function createPlants(scene) {
     const r = mulberry(seed);
     const pool = pools[type];
     const base = y ?? sandHeight(x, z) - 0.3;
-    const plant = { id: seed, type, x, z, y: base, growth, health, seed, leaves: [], extra: [] };
+    if (!MODEL_PLANTS[type] && !PROC_PLANTS[type]) {
+      x = Math.max(-HALF_W + 3.5, Math.min(HALF_W - 3.5, x));
+      z = Math.max(-HALF_D + 3.5, Math.min(HALF_D - 3.5, z));
+    }
+    const plant = { id: seed, type, x, z, y: y ?? sandHeight(x, z) - 0.3, growth, health, seed, leaves: [], extra: [], onSand: y == null };
     if (PROC_PLANTS[type]) {
       if (type === 'frogbit') plant.y = TANK.water + 0.04;
       plant.uHealth = { value: health };
@@ -371,6 +377,32 @@ export function createPlants(scene) {
     layout(plant);
     plants.push(plant);
     return plant;
+  }
+
+  // Model bitki camdan taşmasın ve su yüzeyini delmesin: gerekirse içeri kaydır, boyunu sınırla
+  const _box = new THREE.Box3();
+  function fitPlant(plant) {
+    const m = plant.model;
+    m.updateMatrixWorld(true);
+    _box.setFromObject(m);
+    if (plant.type !== 'frogbit') {
+      const top = TANK.water - 0.8;
+      if (_box.max.y > top) {
+        m.scale.multiplyScalar(Math.max(0.2, (top - plant.y) / (_box.max.y - plant.y)));
+        m.updateMatrixWorld(true);
+        _box.setFromObject(m);
+      }
+    }
+    plant.size = { h: _box.max.y - plant.y, r: Math.min(_box.max.x - _box.min.x, _box.max.z - _box.min.z) / 2 };
+    const pad = plant.type === 'frogbit' ? 2 : 0.4;        // yüzen bitki sürüklenme payı
+    const dx = Math.max(0, -HALF_W + pad - _box.min.x) - Math.max(0, _box.max.x - (HALF_W - pad));
+    const dz = Math.max(0, -HALF_D + pad - _box.min.z) - Math.max(0, _box.max.z - (HALF_D - pad));
+    if (dx || dz) {
+      plant.x += dx; plant.z += dz;
+      if (plant.onSand && plant.type !== 'frogbit') plant.y = sandHeight(plant.x, plant.z) - 0.3;
+      m.position.set(plant.x, plant.y, plant.z);
+      m.updateMatrixWorld(true);
+    }
   }
 
   function remove(plant) {

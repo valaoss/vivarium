@@ -14,6 +14,7 @@ const GUPPY_PALETTES = [
   [0xff6a1a, 0x2a5cff], [0xff2a3a, 0xffb020], [0x2fa8ff, 0x9a3cff], [0xffd23a, 0xff3a2a], [0x18d6a0, 0x1f5cff], [0xff5aa0, 0xffd0e0],
 ];
 
+const _wc = new THREE.Vector3();
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _m = new THREE.Matrix4(), _up = new THREE.Vector3(0, 1, 0);
 const _x = new THREE.Vector3(), _y = new THREE.Vector3(), _q = new THREE.Quaternion(), _mw = new THREE.Vector3(), _fd = new THREE.Vector3();
 
@@ -326,6 +327,7 @@ export class Fish {
     // Engeller (taş, kök, filtre)
     for (const ob of world.obstacles) {
       _v2.subVectors(pos, ob.pos);
+      if (ob.h !== undefined) _v2.y = Math.sign(_v2.y) * Math.max(0, Math.abs(_v2.y) - ob.h);   // dikey silindir (bitki, filtre)
       const L = _v2.length();
       const m = ob.r + 2;
       if (L < m && L > 1e-4) acc.addScaledVector(_v2, ((m - L) / m) * 3 / L);
@@ -452,11 +454,54 @@ export class Fish {
     _q.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), roll));
     this.group.quaternion.slerp(_q, 0.5);
     this.group.position.copy(pos);
+    this.keepInside(world, state === 'air');
     // Ağızdaki yem dudakların hemen içinde durur
     if (this.feed?.food?.held === this) {
       this.group.updateMatrixWorld();
       this.feed.food.pos.copy(this.mouthWorld(_mw, 0.35));
     }
+  }
+
+  // Gövdenin (yüzgeçler dahil) cama, su yüzeyine, kuma ve sert dekora girmemesi
+  keepInside(world, air) {
+    const g = this.group;
+    // gövde modeli sonradan değişebilir (gerçek model yüklenince): anahtar değişirse kutuyu yeniden ölç
+    let key = '';
+    g.traverse((o) => { if (o.isMesh && o.visible) key += o.geometry.uuid; });
+    if (key !== this.localKey) { this.localKey = key; this.localBox = null; }
+    if (!this.localBox) {
+      const p = g.position.clone(), q = g.quaternion.clone(), sc = g.scale.clone();
+      g.position.set(0, 0, 0); g.quaternion.identity(); g.scale.set(1, 1, 1);
+      g.updateMatrixWorld(true);
+      this.localBox = new THREE.Box3().setFromObject(g);
+      this.localBox.expandByScalar(Math.max(0.15, this.baseTotal * 0.07));   // yüzme dalgası ve yüzgeç salınımı payı
+      g.position.copy(p); g.quaternion.copy(q); g.scale.copy(sc);
+    }
+    // yerel kutunun 8 köşesini döndürüp dünya eksenli zarfı bul
+    const b = this.localBox, s = g.scale.x;
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+    for (let i = 0; i < 8; i++) {
+      _wc.set(i & 1 ? b.max.x : b.min.x, i & 2 ? b.max.y : b.min.y, i & 4 ? b.max.z : b.min.z).multiplyScalar(s).applyQuaternion(g.quaternion);
+      x0 = Math.min(x0, _wc.x); x1 = Math.max(x1, _wc.x); y0 = Math.min(y0, _wc.y); y1 = Math.max(y1, _wc.y); z0 = Math.min(z0, _wc.z); z1 = Math.max(z1, _wc.z);
+    }
+    const pos = this.pos, m = 0.25;
+    // sert dekor (taş, kök, filtre, bitki gövdeleri): yatayda dışarı it
+    const rad = Math.max(x1 - x0, z1 - z0) * 0.3;
+    for (const ob of world.obstacles) {
+      const dy = pos.y - ob.pos.y;
+      if (ob.h !== undefined ? Math.abs(dy) > ob.h : Math.abs(dy) > ob.r * 0.9) continue;
+      const dx = pos.x - ob.pos.x, dz = pos.z - ob.pos.z, d = Math.hypot(dx, dz);
+      const min = (ob.core ?? ob.r * 0.75) + rad;
+      if (d < min && d > 1e-4) { pos.x += dx / d * (min - d); pos.z += dz / d * (min - d); }
+    }
+    // cam ve su yüzeyi en son: dekordan itilme balığı camın dışına taşıyamaz
+    pos.x = THREE.MathUtils.clamp(pos.x, -HALF_W + m - x0, HALF_W - m - x1);
+    pos.z = THREE.MathUtils.clamp(pos.z, -HALF_D + m - z0, HALF_D - m - z1);
+    const top = TANK.water - (air ? -0.05 : 0.15);
+    const floor = sandHeight(pos.x, pos.z);
+    pos.y = Math.min(pos.y, top - y1);
+    pos.y = Math.max(pos.y, floor + 0.05 - y0);
+    g.position.copy(pos);
   }
 
   boids(world, acc, w) {

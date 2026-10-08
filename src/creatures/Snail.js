@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { TANK, HALF_W, HALF_D } from '../config.js';
+import { containGroup } from './contain.js';
 import { SPECIES } from './species.js';
 import { sandHeight } from '../world/substrate.js';
 import { patchUnderwater } from '../render/water.js';
@@ -122,12 +123,12 @@ export class Snail {
 
   snap() {
     if (this.surface === 'glass') {
-      this.pos.z = HALF_D - 0.08;
-      this.pos.x = THREE.MathUtils.clamp(this.pos.x, -HALF_W + 1.5, HALF_W - 1.5);
+      this.pos.z = HALF_D - 0.25;   // ayak tabanı camın iç yüzüne değer, içine girmez
+      this.pos.x = THREE.MathUtils.clamp(this.pos.x, -HALF_W + this.radius, HALF_W - this.radius);
       this.pos.y = THREE.MathUtils.clamp(this.pos.y, sandHeight(this.pos.x, HALF_D - 1) + 0.5, TANK.water - 1.5);
     } else {
-      this.pos.x = THREE.MathUtils.clamp(this.pos.x, -HALF_W + 1.5, HALF_W - 1.5);
-      this.pos.z = THREE.MathUtils.clamp(this.pos.z, -HALF_D + 1.5, HALF_D - 1.2);
+      this.pos.x = THREE.MathUtils.clamp(this.pos.x, -HALF_W + this.radius, HALF_W - this.radius);
+      this.pos.z = THREE.MathUtils.clamp(this.pos.z, -HALF_D + this.radius, HALF_D - this.radius);
       this.pos.y = sandHeight(this.pos.x, this.pos.z);
     }
   }
@@ -175,6 +176,7 @@ export class Snail {
       const right = new THREE.Vector3().crossVectors(up, fwd);
       this.group.position.copy(this.pos);
       this.group.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(right, up, fwd));
+      containGroup(this.group, this.pos);
     } else {
       this.pos.x += Math.sin(this.heading) * speed * dt;
       this.pos.z += Math.cos(this.heading) * speed * dt;
@@ -190,6 +192,7 @@ export class Snail {
       const pitch = -Math.atan2(ahead - this.pos.y, 1);
       this.group.position.copy(this.pos);
       this.group.quaternion.setFromEuler(new THREE.Euler(pitch, this.heading, 0, 'YXZ'));
+      containGroup(this.group, this.pos);
       // yerde yosun ve artık yiyerek doyar
       if (speed > 0) this.data.hunger = Math.max(0, this.data.hunger - dt * 0.02 * (world.algae ?? 0.3));
     }
