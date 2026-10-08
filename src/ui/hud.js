@@ -273,7 +273,7 @@ export function createHUD(game, root, sound) {
   });
 
   const MODE_HINTS = {
-    feed: 'Su yüzeyine dokunarak yem bırak. Az ve sık beslemek en iyisidir.',
+    feed: 'Kutuyu suyun üstüne getir, basılı tutup salla. Az ve sık beslemek en iyisidir.',
     wipe: 'Ön camın üzerinde sürükleyerek yosunu sil.',
     plant: 'Bitkiyi dikmek için kumun üzerine dokun. Esc: vazgeç',
   };

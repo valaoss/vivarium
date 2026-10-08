@@ -14,7 +14,7 @@ const GUPPY_PALETTES = [
   [0xff6a1a, 0x2a5cff], [0xff2a3a, 0xffb020], [0x2fa8ff, 0x9a3cff], [0xffd23a, 0xff3a2a], [0x18d6a0, 0x1f5cff], [0xff5aa0, 0xffd0e0],
 ];
 
-const _wc = new THREE.Vector3();
+const _wc = new THREE.Vector3(), _ax = new THREE.Vector3();
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _m = new THREE.Matrix4(), _up = new THREE.Vector3(0, 1, 0);
 const _x = new THREE.Vector3(), _y = new THREE.Vector3(), _q = new THREE.Quaternion(), _mw = new THREE.Vector3(), _fd = new THREE.Vector3();
 
@@ -335,10 +335,13 @@ export class Fish {
     // Sınırlar
     const floor = sandHeight(pos.x, pos.z);
     const lo = sp.bottom ? floor + sp.body.height * 0.45 : floor + 2;
-    const hi = TANK.water - (state === 'air' ? 0.5 : 1.4);
+    // sınırlar gövde boyuna göre: büyük balık camdan daha erken döner, sırt yüzgeci yüzeyi delmez
+    const finTop = (this.localBox?.max.y ?? 0.5) * this.group.scale.x;
+    const half = this.total * 0.5;
+    const hi = TANK.water - (state === 'air' ? 0.5 : 0.9 + finTop);
     const edge = (val, min, max, k) => (val < min + k ? (min + k - val) / k : 0) - (val > max - k ? (val - (max - k)) / k : 0);
-    acc.x += edge(pos.x, -HALF_W + 1.5, HALF_W - 1.5, 5) * 4;
-    acc.z += edge(pos.z, -HALF_D + 1.5, HALF_D - 1.5, 4) * 4;
+    acc.x += edge(pos.x, -HALF_W + 1 + half, HALF_W - 1 - half, 5) * 4;
+    acc.z += edge(pos.z, -HALF_D + 1 + half, HALF_D - 1 - half, 4) * 4;
     acc.y += edge(pos.y, lo, hi, 2.5) * 3;
     // balıklar çoğunlukla yatay yüzer
     if (!sp.bottom && state !== 'air') acc.y *= 0.6;
@@ -398,15 +401,30 @@ export class Fish {
       const dir = face ? _x.copy(this.faceDir) : _x.copy(this.vel).divideScalar(spd);
       // eğim sınırla
       const maxPitch = face ? 1.1 : sp.bottom && state !== 'air' ? 0.25 : 0.6;
-      dir.y = THREE.MathUtils.clamp(dir.y, -maxPitch, maxPitch);
+      // eğim sınırı: yön yatay bileşenini korur (dikey hızda bile balık dik durmaz, ekseni etrafında savrulmaz)
       dir.normalize();
-      const prevYaw = Math.atan2(this.fwd.x, this.fwd.z);
-      const ang = this.fwd.angleTo(dir);
-      const t = Math.min(1, (maxTurn * dt) / Math.max(ang, 1e-4));
-      this.fwd.lerp(dir, t).normalize();
-      let dy = Math.atan2(this.fwd.x, this.fwd.z) - prevYaw;
-      if (dy > Math.PI) dy -= Math.PI * 2; if (dy < -Math.PI) dy += Math.PI * 2;
-      this.yawRate = THREE.MathUtils.lerp(this.yawRate, dy / Math.max(dt, 1e-4), 0.2);
+      const py = THREE.MathUtils.clamp(dir.y, -Math.min(maxPitch, 0.82), Math.min(maxPitch, 0.82));
+      let hx = dir.x, hz = dir.z, hl = Math.hypot(hx, hz);
+      if (hl < 0.25) {
+        // hız neredeyse dikey: son yatay yönü koru
+        const fl = Math.hypot(this.fwd.x, this.fwd.z);
+        if (fl > 0.2) { hx = this.fwd.x; hz = this.fwd.z; hl = fl; } else { hx = Math.sin(this.lastYaw ?? 0); hz = Math.cos(this.lastYaw ?? 0); hl = 1; }
+      }
+      const hk = Math.sqrt(1 - py * py) / hl;
+      dir.set(hx * hk, py, hz * hk);
+      // balık gibi dön: yatay dönüş (yaw) ve burun eğimi (pitch) ayrı ayrı ve sınırlı hızla
+      const fl = Math.hypot(this.fwd.x, this.fwd.z);
+      let yaw = fl > 0.3 ? Math.atan2(this.fwd.x, this.fwd.z) : (this.lastYaw ?? Math.atan2(dir.x, dir.z));
+      let pitch = Math.asin(THREE.MathUtils.clamp(this.fwd.y, -1, 1));
+      let dyaw = Math.atan2(dir.x, dir.z) - yaw;
+      dyaw = Math.atan2(Math.sin(dyaw), Math.cos(dyaw));
+      const stepYaw = THREE.MathUtils.clamp(dyaw, -maxTurn * dt, maxTurn * dt);
+      yaw += stepYaw;
+      pitch += THREE.MathUtils.clamp(Math.asin(py) - pitch, -maxTurn * 0.5 * dt, maxTurn * 0.5 * dt);
+      pitch = THREE.MathUtils.clamp(pitch, -0.96, 0.96);
+      this.fwd.set(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch));
+      this.lastYaw = yaw;
+      this.yawRate = THREE.MathUtils.lerp(this.yawRate, stepYaw / Math.max(dt, 1e-4), 0.2);
     } else {
       this.yawRate *= 0.9;
       // dururken yatay pozisyona dön
@@ -454,7 +472,7 @@ export class Fish {
     _q.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), roll));
     this.group.quaternion.slerp(_q, 0.5);
     this.group.position.copy(pos);
-    this.keepInside(world, state === 'air');
+    this.keepInside(world, state === 'air', dt);
     // Ağızdaki yem dudakların hemen içinde durur
     if (this.feed?.food?.held === this) {
       this.group.updateMatrixWorld();
@@ -463,7 +481,7 @@ export class Fish {
   }
 
   // Gövdenin (yüzgeçler dahil) cama, su yüzeyine, kuma ve sert dekora girmemesi
-  keepInside(world, air) {
+  keepInside(world, air, dt) {
     const g = this.group;
     // gövde modeli sonradan değişebilir (gerçek model yüklenince): anahtar değişirse kutuyu yeniden ölç
     let key = '';
@@ -487,13 +505,19 @@ export class Fish {
     const pos = this.pos, m = 0.25;
     // sert dekor (taş, kök, filtre, bitki gövdeleri): yatayda dışarı it
     const rad = Math.max(x1 - x0, z1 - z0) * 0.3;
+    // dekordan uzaklaşma bir kerede değil, balığın kendi yüzüşü hızında (ışınlanma olmasın)
+    let px = 0, pz = 0;
     for (const ob of world.obstacles) {
       const dy = pos.y - ob.pos.y;
       if (ob.h !== undefined ? Math.abs(dy) > ob.h : Math.abs(dy) > ob.r * 0.9) continue;
       const dx = pos.x - ob.pos.x, dz = pos.z - ob.pos.z, d = Math.hypot(dx, dz);
       const min = (ob.core ?? ob.r * 0.75) + rad;
-      if (d < min && d > 1e-4) { pos.x += dx / d * (min - d); pos.z += dz / d * (min - d); }
+      if (d < min && d > 1e-4) { px += dx / d * (min - d); pz += dz / d * (min - d); }
     }
+    const pl = Math.hypot(px, pz), maxStep = dt * 5;
+    if (pl > maxStep) { px *= maxStep / pl; pz *= maxStep / pl; }
+    pos.x += px; pos.z += pz;
+    if (pl > 0.01) this.vel.x += px * 2, this.vel.z += pz * 2;        // itilen balık yönünü de oraya çevirir
     // cam ve su yüzeyi en son: dekordan itilme balığı camın dışına taşıyamaz
     pos.x = THREE.MathUtils.clamp(pos.x, -HALF_W + m - x0, HALF_W - m - x1);
     pos.z = THREE.MathUtils.clamp(pos.z, -HALF_D + m - z0, HALF_D - m - z1);

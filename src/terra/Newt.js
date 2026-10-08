@@ -239,7 +239,10 @@ export class Newt {
     if (w.blocked(ahead.x, ahead.z, 1) && st !== 'strike') turnTo = this.heading + 1.2;
     const err = wrap(turnTo - this.heading);
     const turnRate = this.inWater ? 1.8 : 0.9;
+    const h0 = this.heading;
     if (want > 0 || st === 'stalk') this.heading += THREE.MathUtils.clamp(err, -turnRate * dt, turnRate * dt);
+    // yerinde dönerken de ayaklar adım atar: dönüş hızını yürüme hızına çevir (ayak kayması olmasın)
+    this.yawRate = (this.heading - h0) / Math.max(dt, 1e-4);
     if (Math.abs(err) > 1.2 && st !== 'strike') want *= 0.25;   // önce yerinde dön
     this.speed += (want - this.speed) * Math.min(1, dt * (st === 'strike' ? 20 : this.inWater ? 1.5 : 3));
 
@@ -314,9 +317,10 @@ export class Newt {
 
     // --- yürüme: çapraz bacak çiftleri, gövde duran dalga ile S çizer
     const STRIDE = 2.4;   // bir döngüde alınan yol (cm): duruş evresinde ayağın geriye kaydığı yol / duty
-    const f = this.speed / STRIDE;
+    const gait = Math.max(Math.abs(this.speed), Math.abs(this.yawRate ?? 0) * 2.2);
+    const f = gait / STRIDE;
     this.phase = (this.phase + f * dt * lb) % 1;
-    const moving = THREE.MathUtils.clamp(this.speed / 1.2, 0, 1) * lb;
+    const moving = THREE.MathUtils.clamp(gait / 1.2, 0, 1) * lb;
     const duty = 0.68, A = 0.8, LIFT = 0.45;
     const p2 = this.phase * Math.PI * 2;
 

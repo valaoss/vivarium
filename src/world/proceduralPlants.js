@@ -68,7 +68,9 @@ function procShader(mode) {
 
 function makeMat(kind, opts, uniforms) {
   const m = new THREE.MeshStandardMaterial({ vertexColors: true, side: THREE.DoubleSide, ...opts });
-  return patchUnderwater(m, { key: 'proc-' + kind, extra: procShader(kind === 'frogbit' || kind === 'frogroot' ? 'float' : 'stem'), uniforms });
+  const float = kind === 'frogbit' || kind === 'frogroot';
+  // yüzen yaprak su yüzeyinin üstünde: su altı kostik deseni ve saçılma ona uygulanmaz
+  return patchUnderwater(m, { key: 'proc-' + kind, extra: procShader(float ? 'float' : 'stem'), uniforms, caustics: !float });
 }
 
 // Amazon frogbit (Limnobium laevigatum): yüzen yuvarlak, kalın, parlak yapraklı rozet ve sarkan tüylü kökler

@@ -133,6 +133,29 @@ export class Snail {
     }
   }
 
+  // Kum (yatay, cama bakar) ile cam (dikey, yukarı bakar) duruşları arasında ~5 sn'lik yumuşak geçiş
+  transition(dt) {
+    const tr = this.trans;
+    tr.t = Math.min(1, tr.t + dt / 5);
+    const x = this.pos.x;
+    const sandP = new THREE.Vector3(x, sandHeight(x, HALF_D - this.radius), HALF_D - this.radius);
+    const glassP = new THREE.Vector3(x, sandHeight(x, HALF_D - 1) + 0.5, HALF_D - 0.25);
+    const qSand = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, tr.to === 'glass' ? 0 : Math.PI, 0, 'YXZ'));
+    const fwd = new THREE.Vector3(0, tr.to === 'glass' ? 1 : -1, 0), up = new THREE.Vector3(0, 0, -1);
+    const qGlass = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(new THREE.Vector3().crossVectors(up, fwd), up, fwd));
+    const k = tr.t * tr.t * (3 - 2 * tr.t);
+    const a = tr.to === 'glass' ? k : 1 - k;          // 0 = kum, 1 = cam
+    this.pos.lerpVectors(sandP, glassP, a);
+    this.group.position.copy(this.pos);
+    this.group.quaternion.slerpQuaternions(qSand, qGlass, a);
+    if (tr.t >= 1) {
+      this.surface = tr.to;
+      this.heading = tr.to === 'glass' ? 0 : Math.PI;
+      this.trans = null;
+      this.goal = null;
+    }
+  }
+
   update(dt, world) {
     this.t += dt;
     this.timer -= dt;
@@ -141,23 +164,37 @@ export class Snail {
       this.timer = 6 + Math.random() * 10;
       const r = Math.random();
       this.state = r < 0.15 ? 'rest' : r < 0.55 ? 'graze' : 'crawl';
-      this.heading += (Math.random() - 0.5) * 2.5;
+      this.wantHeading = this.heading + (Math.random() - 0.5) * 2.5;
       // kum → cam: ön cama yakınken tırmanmaya başla; camdayken ara sıra in
-      if (this.surface === 'sand' && this.pos.z > HALF_D - 4 && Math.random() < 0.6) {
-        this.surface = 'glass';
-        this.heading = (Math.random() - 0.5) * 1.2; // yukarı doğru
-        this.snap();
+      // kum ↔ cam geçişi ışınlanma değil: önce cama/kuma kadar sürünür, sonra ayağını yavaşça yüzeye sarar
+      if (this.surface === 'sand' && this.pos.z > HALF_D - 6 && Math.random() < 0.6) {
+        this.goal = 'glass';
+        this.state = 'crawl';
       } else if (this.surface === 'glass' && Math.random() < 0.12) {
-        this.surface = 'sand';
-        this.pos.z = HALF_D - 2;
-        this.heading = Math.PI + (Math.random() - 0.5);
-        this.snap();
+        this.goal = 'sand';
+        this.state = 'crawl';
       } else if (this.surface === 'sand' && Math.random() < 0.4) {
-        this.heading = (Math.random() - 0.5) * 1.4; // cama doğru yönel
+        this.wantHeading = (Math.random() - 0.5) * 1.4; // cama doğru yönel
       }
     }
     const speed = this.state === 'rest' ? 0 : this.sp.cruise * (this.state === 'graze' ? 0.5 : 1) * (night ? 1.3 : 1);
-    if (this.surface === 'glass') {
+    // hedef yüzeye doğru yavaşça dön (camda aşağı = heading π, kumda cama doğru = 0)
+    // salyangoz yönünü ani değil, ayağıyla yavaşça döndürür
+    if (!this.goal && this.wantHeading !== undefined) {
+      const e = Math.atan2(Math.sin(this.wantHeading - this.heading), Math.cos(this.wantHeading - this.heading));
+      this.heading += THREE.MathUtils.clamp(e, -dt * 0.3, dt * 0.3);
+    }
+    if (this.goal && !this.trans) {
+      const want = this.goal === 'glass' ? 0 : Math.PI;
+      const err = Math.atan2(Math.sin(want - this.heading), Math.cos(want - this.heading));
+      this.heading += THREE.MathUtils.clamp(err, -dt * 0.35, dt * 0.35);
+      const glassY = sandHeight(this.pos.x, HALF_D - 1) + 0.5;
+      if (this.goal === 'glass' && this.pos.z >= HALF_D - this.radius - 0.05 && Math.abs(err) < 0.3) this.trans = { t: 0, to: 'glass' };
+      if (this.goal === 'sand' && this.pos.y <= glassY + 0.05 && Math.abs(err) < 0.3) this.trans = { t: 0, to: 'sand' };
+    }
+    if (this.trans) {
+      this.transition(dt);
+    } else if (this.surface === 'glass') {
       // camda: x yana, y yukarı (heading 0 = yukarı)
       this.pos.x += Math.sin(this.heading) * speed * dt;
       this.pos.y += Math.cos(this.heading) * speed * dt;
@@ -176,7 +213,7 @@ export class Snail {
       const right = new THREE.Vector3().crossVectors(up, fwd);
       this.group.position.copy(this.pos);
       this.group.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(right, up, fwd));
-      containGroup(this.group, this.pos);
+      containGroup(this.group, this.pos, 0.35);
     } else {
       this.pos.x += Math.sin(this.heading) * speed * dt;
       this.pos.z += Math.cos(this.heading) * speed * dt;
@@ -192,7 +229,7 @@ export class Snail {
       const pitch = -Math.atan2(ahead - this.pos.y, 1);
       this.group.position.copy(this.pos);
       this.group.quaternion.setFromEuler(new THREE.Euler(pitch, this.heading, 0, 'YXZ'));
-      containGroup(this.group, this.pos);
+      containGroup(this.group, this.pos, 0.35);
       // yerde yosun ve artık yiyerek doyar
       if (speed > 0) this.data.hunger = Math.max(0, this.data.hunger - dt * 0.02 * (world.algae ?? 0.3));
     }

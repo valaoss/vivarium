@@ -456,7 +456,7 @@ export class Terrarium {
         m.rotation.y += Math.sin(f.phase * 0.7) * dt * 0.4;
         const sp = 0.25 * dt;
         const nx = f.pos.x + Math.sin(m.rotation.y) * sp, nz = f.pos.z + Math.cos(m.rotation.y) * sp;
-        if (groundHeight(nx, nz) > WATER_Y && !this.blocked(nx, nz, -1.5)) { f.pos.x = nx; f.pos.z = nz; f.pos.y = groundHeight(nx, nz) + 0.12; } else m.rotation.y += 1;
+        if (groundHeight(nx, nz) > WATER_Y && !this.blocked(nx, nz, -1.5)) { f.pos.x = nx; f.pos.z = nz; f.pos.y = groundHeight(nx, nz) + 0.12; } else m.rotation.y += dt * 1.2;   // su kenarında yavaşça geri döner
       }
     }
     this.newt?.update(dt);

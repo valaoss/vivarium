@@ -282,9 +282,15 @@ export function createPlants(scene) {
     if (MODEL_PLANTS[plant.type] || PROC_PLANTS[plant.type]) {
       plant.uHealth.value = plant.health;
       if (plant.model) {
-        plant.model.scale.setScalar((MODEL_PLANTS[plant.type]?.size ?? 1) * (0.55 + 0.45 * plant.growth));
+        const full = MODEL_PLANTS[plant.type]?.size ?? 1;
         plant.model.position.set(plant.x, plant.y, plant.z);
-        fitPlant(plant);
+        // yerleşim bir kez, tam boyuna göre yapılır: büyürken bitki yerinden kaymaz, camdan taşmaz
+        if (!plant.fitted) {
+          plant.model.scale.setScalar(full);
+          plant.capK = fitPlant(plant);
+          plant.fitted = true;
+        }
+        plant.model.scale.setScalar(full * (0.55 + 0.45 * plant.growth) * plant.capK);
       }
       return;
     }
@@ -385,10 +391,12 @@ export function createPlants(scene) {
     const m = plant.model;
     m.updateMatrixWorld(true);
     _box.setFromObject(m);
+    let capK = 1;
     if (plant.type !== 'frogbit') {
       const top = TANK.water - 0.8;
       if (_box.max.y > top) {
-        m.scale.multiplyScalar(Math.max(0.2, (top - plant.y) / (_box.max.y - plant.y)));
+        capK = Math.max(0.2, (top - plant.y) / (_box.max.y - plant.y));
+        m.scale.multiplyScalar(capK);
         m.updateMatrixWorld(true);
         _box.setFromObject(m);
       }
@@ -403,6 +411,7 @@ export function createPlants(scene) {
       m.position.set(plant.x, plant.y, plant.z);
       m.updateMatrixWorld(true);
     }
+    return capK;
   }
 
   function remove(plant) {

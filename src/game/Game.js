@@ -9,6 +9,7 @@ import { WaterSim } from '../render/waterSim.js';
 import { createDust, createBubbles, createFoodMesh } from '../render/particles.js';
 import { createPostFX } from '../render/postfx.js';
 import { createSubstrate, sandHeight } from '../world/substrate.js';
+import { createFeeder } from '../world/feeder.js';
 import { createPlants, PLANT_TYPES } from '../world/plants.js';
 import { SPECIES, NAMES, levelFromXp, xpForLevel } from '../creatures/species.js';
 import { Fish } from '../creatures/Fish.js';
@@ -55,6 +56,8 @@ export class Game {
     this.scene.add(this.bubbles);
     this.foodMesh = createFoodMesh();
     this.scene.add(this.foodMesh);
+    this.feeder = createFeeder();
+    this.scene.add(this.feeder.group);
 
     // Bitki yerleştirme önizleme halkası
     this.ghost = new THREE.Mesh(
@@ -444,6 +447,32 @@ export class Game {
     if (settled > 25) this.toast('Tabanda çok fazla yem birikti. Artık yemler suyu kirletir ve yosunu besler.', 'warn');
   }
 
+  // Yem kutusu el yüksekliğinde (cam kenarının üstünde) ve lamba armatürünün önünde gezinir
+  feederAt(e) {
+    const ray = this.rayFromEvent(e);
+    _plane.set(new THREE.Vector3(0, 1, 0), -(TANK.h + 4.6));
+    if (ray.intersectPlane(_plane, _hit)) this.moveFeeder(_hit.x, _hit.z);
+  }
+  moveFeeder(x, z) {
+    const first = !this.feederPlaced;
+    this.feederPlaced = true;
+    const lampFront = 5.5 + 2.9;
+    this.feederTarget = (this.feederTarget ?? new THREE.Vector3()).set(
+      THREE.MathUtils.clamp(x, -HALF_W + 3, HALF_W - 3),
+      TANK.h + 4.6,
+      THREE.MathUtils.clamp(z, Math.min(lampFront, HALF_D - 2.6), HALF_D - 2.6),
+    );
+    if (first) this.feeder.group.position.copy(this.feederTarget);
+  }
+  emitFlake(p) {
+    if (this.food.length > 220) return;
+    this.food.push({
+      pos: p, state: 'air', vel: new THREE.Vector3((Math.random() - 0.5) * 6, -4 - Math.random() * 6, -4 - Math.random() * 8),
+      t: 0, age: 0, rot: new THREE.Euler(Math.random() * 6, Math.random() * 6, 0), spin: (Math.random() - 0.5) * 14, eaten: false,
+      size: 0.5 + Math.random() ** 2 * 1.6,
+    });
+  }
+
   spawnSettledFood() {
     const x = (Math.random() - 0.5) * (TANK.w - 6), z = (Math.random() - 0.5) * (TANK.d - 6);
     this.food.push({ pos: new THREE.Vector3(x, sandHeight(x, z) + 0.1, z), state: 'settled', t: 0, age: Math.random() * 60, rot: new THREE.Euler(-Math.PI / 2, 0, Math.random() * 6), spin: 0, eaten: false });
@@ -465,7 +494,31 @@ export class Game {
         f.kick.multiplyScalar(Math.max(0, 1 - dt * 5));
         if (f.kick.lengthSq() < 0.01) f.kick = null;
       }
-      if (f.state === 'float') {
+      if (f.state === 'air') {
+        // havada süzülen pul: yerçekimi, hava direnci ve yaprak gibi salınım
+        f.vel.y = Math.max(-38, f.vel.y - 420 * dt);
+        f.vel.x *= 1 - dt * 3; f.vel.z *= 1 - dt * 3;
+        f.pos.addScaledVector(f.vel, dt);
+        f.pos.x += Math.sin(this.time * 11 + i) * dt * 2;
+        f.rot.x += f.spin * dt; f.rot.y += f.spin * 0.6 * dt;
+        f.pos.x = THREE.MathUtils.clamp(f.pos.x, -HALF_W + 0.5, HALF_W - 0.5);
+        f.pos.z = THREE.MathUtils.clamp(f.pos.z, -HALF_D + 0.5, HALF_D - 0.5);
+        if (f.pos.y <= TANK.water - 0.05) {
+          f.pos.y = TANK.water - 0.05;
+          f.state = 'float';
+          f.t = 1.5 + Math.random() * 3;
+          f.rot.x = -Math.PI / 2 + (Math.random() - 0.5) * 0.3;
+          this.waterSim.drop(f.pos.x, f.pos.z, 0.45, 0.03);
+          if (!this.pourLanded) {
+            this.pourLanded = true;
+            this.sfx('feed');
+            this.state.counters.fed++;
+            for (const sc of Object.values(this.school)) sc.excite = 1;
+            const settled = this.food.filter((o) => o.state === 'settled').length;
+            if (settled > 25) this.toast('Tabanda çok fazla yem birikti. Artık yemler suyu kirletir ve yosunu besler.', 'warn');
+          }
+        }
+      } else if (f.state === 'float') {
         f.t -= dt;
         f.pos.x += Math.sin(this.time + i) * dt * 0.4;
         if (f.t < 0) f.state = 'sink';
@@ -676,7 +729,10 @@ export class Game {
 
   setMode(m) {
     this.mode = m;
-    this.controls.enabled = m !== 'wipe';
+    this.controls.enabled = m !== 'wipe' && m !== 'feed';
+    this.feeder.group.visible = m === 'feed';
+    this.feeder.pouring = false;
+    if (m === 'feed' && !this.feederPlaced) this.moveFeeder(0, HALF_D);
     this.ghost.visible = m.startsWith('plant:');
     this.canvas.style.cursor = m === 'feed' ? 'crosshair' : m === 'wipe' ? 'grab' : m.startsWith('plant:') ? 'copy' : '';
     this.emit('mode', m);
@@ -791,9 +847,11 @@ export class Game {
     this.canvas.addEventListener('pointerdown', (e) => {
       down = { x: e.clientX, y: e.clientY };
       if (this.mode === 'wipe') { wiping = true; this.canvas.style.cursor = 'grabbing'; this.wipeAt(this.rayFromEvent(e)); }
+      if (this.mode === 'feed') { this.feederAt(e); this.feeder.pouring = true; this.pourLanded = false; this.canvas.setPointerCapture?.(e.pointerId); }
     });
     this.canvas.addEventListener('pointermove', (e) => {
       if (wiping) { this.wipeAt(this.rayFromEvent(e)); this.wiping = true; clearTimeout(this.wipeStop); this.wipeStop = setTimeout(() => { this.wiping = false; }, 90); }
+      if (this.mode === 'feed') this.feederAt(e);
       if (this.mode.startsWith('plant:')) {
         this.rayFromEvent(e);
         const h = _ray.intersectObject(this.substrate.sand, false)[0];
@@ -806,6 +864,7 @@ export class Game {
     });
     window.addEventListener('pointerup', (e) => {
       if (wiping) { wiping = false; this.wiping = false; this.canvas.style.cursor = 'grab'; }
+      this.feeder.pouring = false;
       if (!down || e.target !== this.canvas) { down = null; return; }
       const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y);
       down = null;
@@ -820,11 +879,7 @@ export class Game {
 
   click(e) {
     const ray = this.rayFromEvent(e);
-    if (this.mode === 'feed') {
-      const p = this.surfacePoint(ray);
-      if (p) this.dropFood(p.x, p.z);
-      return;
-    }
+    if (this.mode === 'feed') return;
     if (this.mode.startsWith('plant:')) {
       const type = this.mode.slice(6);
       const h = _ray.intersectObject(this.substrate.sand, false)[0];
@@ -924,6 +979,11 @@ export class Game {
     };
     for (const c of this.creatures) c.update(bdt, world);
     this.updateFood(bdt, dtMin);
+    if (this.feeder.group.visible) {
+      // el imleci takip eder ama ani sıçramaz
+      this.feeder.group.position.lerp(this.feederTarget, Math.min(1, dt * 14));
+      this.feeder.update(dt, (p) => this.emitFlake(p));
+    }
 
     for (const ev of this.events) {
       if (ev.type === 'eat') this.sfx('eat');

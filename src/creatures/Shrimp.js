@@ -311,6 +311,10 @@ export class Shrimp {
     }
     // kaçış: karın hızla kıvrılır, karides geriye doğru fırlar (kuyruk çırpma)
     if (this.flee > 0) speed = -this.sp.burst * Math.max(0.25, this.flip / 0.3);
+    if (this.flip > 0 && this.fleeHeading !== undefined) {
+      const e = Math.atan2(Math.sin(this.fleeHeading - this.heading), Math.cos(this.fleeHeading - this.heading));
+      this.heading += THREE.MathUtils.clamp(e, -7 * dt, 7 * dt);
+    }
     this.flip = Math.max(0, this.flip - dt);
     this.pos.x += Math.sin(this.heading) * speed * dt;
     this.pos.z += Math.cos(this.heading) * speed * dt;
@@ -415,7 +419,7 @@ export class Shrimp {
     this.flip = 0.3;
     // tehdide dönük kalıp geriye fırlar
     const away = new THREE.Vector3().subVectors(this.pos, from).setY(0).normalize();
-    this.heading = Math.atan2(-away.x, -away.z);
+    this.fleeHeading = Math.atan2(-away.x, -away.z);   // kuyruk vuruşu sırasında gövde tehdide doğru savrulur (anlık değil)
     this.hop = 1;
     this.data.stress = Math.min(100, this.data.stress + 4);
   }
