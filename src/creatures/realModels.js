@@ -113,6 +113,18 @@ function prepare(gltf, key, src) {
     for (let i = 0; i < pos.count; i++) {
       seg[i * 4] = (half - pos.getZ(i)) / (2 * half);   // 0 burun .. 1 kuyruk ucu
       seg[i * 4 + 1] = pos.getY(i) / halfH;
+      const along = seg[i * 4], x = pos.getX(i), y = pos.getY(i);
+      const tail = THREE.MathUtils.smoothstep(along, b.length / total * 0.94, 1);
+      const vertical = THREE.MathUtils.smoothstep(Math.abs(y), b.height * 0.48, b.height * 0.9);
+      const lateral = THREE.MathUtils.smoothstep(Math.abs(x), b.width * 0.55, b.width * 1.1);
+      // Zero weight at the attachment avoids a seam between body and fin.
+      if (along > 0.15 && along < 0.43 && lateral > 0) {
+        seg[i * 4 + 2] = 2;
+        seg[i * 4 + 3] = Math.sign(x) * lateral;
+      } else if (along > 0.15 && (tail > 0 || vertical > 0)) {
+        seg[i * 4 + 2] = 1;
+        seg[i * 4 + 3] = Math.max(tail, vertical);
+      }
     }
     p.geo.setAttribute('aSeg', new THREE.BufferAttribute(seg, 4));
     if (!p.geo.attributes.normal) p.geo.computeVertexNormals();

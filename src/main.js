@@ -30,9 +30,9 @@ function start() {
     hud.showWelcome(game.pendingWelcome, false);
   }
 
-  let last = performance.now();
+  let last = null;
   function frame(now) {
-    const dt = (now - last) / 1000;
+    const dt = last === null ? 0 : Math.max(0, (now - last) / 1000);
     last = now;
     game.update(dt);
     game.renderFrame();

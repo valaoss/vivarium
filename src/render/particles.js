@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { TANK, MOBILE } from '../config.js';
-import { WU, WATER_GLSL, patchUnderwater } from './water.js';
+import { WU, WATER_GLSL, patchUnderwater, waterCurrent } from './water.js';
 
 // Suda asılı ince toz: su "dolu" görünsün
 export function createDust(count = 700) {
@@ -152,6 +152,7 @@ export function createBubbles(source, max = MOBILE ? 360 : 640) {
   };
   const pop = (b) => { if (pts.userData.onPop) pts.userData.onPop(b.x, b.z, b.r); };
 
+  const current = new THREE.Vector3();
   pts.userData.update = (dt, flowX = 0) => {
     const rnd = Math.random;
     if (pts.userData.enabled) {
@@ -171,6 +172,9 @@ export function createBubbles(source, max = MOBILE ? 360 : 640) {
     }
     for (let i = parts.length - 1; i >= 0; i--) {
       const b = parts[i];
+      waterCurrent(b, WU.uTime.value, WU.uFlow.value, current);
+      b.x = THREE.MathUtils.clamp(b.x + current.x * dt, -TANK.w / 2 + b.r, TANK.w / 2 - b.r);
+      b.z = THREE.MathUtils.clamp(b.z + current.z * dt, -TANK.d / 2 + b.r, TANK.d / 2 - b.r);
       if (b.surf) {
         b.life -= dt;
         b.x += b.vx * dt; b.z += b.vz * dt;
@@ -200,6 +204,8 @@ export function createBubbles(source, max = MOBILE ? 360 : 640) {
     for (let i = 0; i < max; i++) {
       const b = parts[i];
       if (b) {
+        b.x = THREE.MathUtils.clamp(b.x, -TANK.w / 2 + b.r, TANK.w / 2 - b.r);
+        b.z = THREE.MathUtils.clamp(b.z, -TANK.d / 2 + b.r, TANK.d / 2 - b.r);
         pos[i * 3] = b.x; pos[i * 3 + 1] = b.y; pos[i * 3 + 2] = b.z;
         size[i] = b.r; phase[i] = b.ph; flat[i] = b.surf ? 1 : 0;
       } else size[i] = 0;

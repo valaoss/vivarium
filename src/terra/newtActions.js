@@ -31,7 +31,13 @@ const rest = {
     n.halt(n.inWater ? 'bottom' : 'rest');
     n.restT += dt;
     if (n.restT > n.fidget) { n.restT = 0; n.fidget = pick(n, 20, 60); n.nudge = pick(n, -0.8, 0.8); }
-    if (n.nudge) { n.heading += Math.sign(n.nudge) * Math.min(Math.abs(n.nudge), dt * 0.5); n.nudge -= Math.sign(n.nudge) * Math.min(Math.abs(n.nudge), dt * 0.5); if (Math.abs(n.nudge) < 0.01) n.nudge = 0; }
+    if (n.nudge) {
+      const step = Math.sign(n.nudge) * Math.min(Math.abs(n.nudge), dt * 0.5);
+      const angle = n.heading + step;
+      n.face(_v.set(n.pos.x + Math.sin(angle) * 3, n.pos.y, n.pos.z + Math.cos(angle) * 3));
+      n.nudge -= step;
+      if (Math.abs(n.nudge) < 0.01) n.nudge = 0;
+    }
     n.note = n.inWater ? 'Dipte hareketsiz; gırtlağı nefesle inip kalkıyor' : 'Kuytuda hareketsiz';
     return 'run';
   },
@@ -302,8 +308,20 @@ const explore = {
     const v = (n.world.night ? 0.38 : 0.18) * (0.6 + n.traits.activity * 0.8) + n.restless * 0.25;
     return [v, `${n.world.night ? 'gece: daha hareketli' : 'gündüz gezintisi'}${n.restless > 0.5 ? '; uzun süredir kıpırdamadı' : ''}`];
   },
-  start(n) { n.ex = n.randomSpot(n.rand() > n.traits.terrestrial); },
-  tick(n) {
+  start(n) {
+    n.ex = n.randomSpot(n.rand() > n.traits.terrestrial);
+    n.exMoveT = pick(n, 5, 14);
+    n.exPause = 0;
+  },
+  tick(n, dt) {
+    if (n.exPause > 0) {
+      n.exPause -= dt;
+      n.halt(n.inWater ? 'cruise' : 'rest');
+      n.note = 'Kısa süre durup çevresini kontrol ediyor';
+      return 'run';
+    }
+    n.exMoveT -= dt;
+    if (n.exMoveT <= 0) { n.exPause = pick(n, 1, 4); n.exMoveT = pick(n, 5, 14); }
     const d = n.goTo(n.ex, n.inWater ? 3.5 : 1.6, 2);
     n.note = n.inWater ? 'Göletin içinde dolaşıyor' : 'Karada yavaşça yürüyor';
     return d < 2 ? 'done' : 'run';

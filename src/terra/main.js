@@ -4,9 +4,9 @@ import { createTerraHUD } from './hud.js';
 export function startTerra() {
   const terra = new Terrarium(document.getElementById('scene'));
   const hud = createTerraHUD(terra, document.getElementById('ui'));
-  let last = performance.now();
+  let last = null;
   function frame(now) {
-    const dt = (now - last) / 1000;
+    const dt = last === null ? 0 : Math.max(0, (now - last) / 1000);
     last = now;
     terra.update(dt);
     terra.renderFrame();

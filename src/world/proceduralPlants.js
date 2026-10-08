@@ -38,7 +38,6 @@ function procShader(mode) {
           float lag = aSway.x;
           vec2 dLag = vec2(sin(uTime * 0.045 + uPhase - lag * 0.6), cos(uTime * 0.037 + uPhase * 1.7 - lag * 0.6)) * 1.6;
           transformed.xz += mix(drift, dLag, min(lag, 1.0));
-          transformed.y += sin(uTime * 0.9 + uPhase + position.x * 0.4) * 0.05 * (1.0 - min(lag, 1.0));
           transformed.x += sin(uTime * 0.7 + uPhase + position.y * 0.5) * lag * lag * 0.6;
           transformed.z += cos(uTime * 0.55 + uPhase * 1.3 + position.y * 0.4) * lag * lag * 0.45;
         }` : `

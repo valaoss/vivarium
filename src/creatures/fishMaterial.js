@@ -16,6 +16,8 @@ export const SWIM_VERT_DECL = /* glsl */ `
   uniform float uMouthY;
   uniform float uGill;
   uniform float uEel;
+  uniform float uFinSpread;
+  uniform float uFinActivity;
   varying vec4 vSeg;
   varying vec3 vObjPos;
 `;
@@ -25,7 +27,7 @@ export const SWIM_VERT = /* glsl */ `
   vObjPos = transformed;
   {
     // Ağız: ön uçtaki köşeler dudak hattından yukarı/aşağı açılır, dudaklar öne uzar
-    float km = smoothstep(0.075, 0.0, aSeg.x) * step(aSeg.z, 0.5);
+    float km = (1.0 - smoothstep(0.0, 0.075, aSeg.x)) * step(aSeg.z, 0.5);
     if (km > 0.0) {
       float dy = transformed.y - uMouthY;
       float gape = uMouth * km * uLen;
@@ -44,12 +46,16 @@ export const SWIM_VERT = /* glsl */ `
     float wave = sin(uPhase - s * mix(5.2, 11.0, uEel));
     float lat = (uAmp * wave * env + uBend * s * s) * uLen;
     if (aSeg.z > 0.5 && aSeg.z < 1.5) {
+      float spread = 1.0 - (1.0 - uFinSpread) * abs(aSeg.w) * 0.35;
+      transformed.y *= spread;
+      transformed.x *= spread;
       // yüzgeç zarının dalgalanması
-      lat += sin(uPhase * 1.3 - s * 9.0 + aSeg.y * 2.0) * 0.06 * aSeg.w * uLen * (0.4 + uAmp * 4.0);
+      lat += sin(uPhase * 1.3 - s * 9.0 + aSeg.y * 2.0) * 0.06 * aSeg.w * uLen * (0.15 + uFinActivity * 0.85 + uAmp * 4.0);
     }
     if (aSeg.z > 1.5) {
       // göğüs yüzgeçleri: kürek çekme
-      float f = sin(uFlap + sign(aSeg.w) * 0.6);
+      float f = sin(uFlap + sign(aSeg.w) * 0.6) * uFinActivity;
+      transformed.x *= 1.0 - (1.0 - uFinSpread) * abs(aSeg.w) * 0.25;
       transformed.x += f * abs(aSeg.w) * 0.25 * uLen * 0.12 * sign(aSeg.w);
       transformed.y += f * abs(aSeg.w) * 0.18 * uLen * 0.1;
     }
@@ -379,6 +385,8 @@ export function makeFishUniforms(len, pattern, bodyFrac, colA, colB, seed) {
     uMouthY: { value: 0 },
     uGill: { value: 0 },
     uEel: { value: 0 },
+    uFinSpread: { value: 1 },
+    uFinActivity: { value: 0.5 },
     uPattern: { value: pattern },
     uSeed: { value: seed },
     uBodyFrac: { value: bodyFrac },

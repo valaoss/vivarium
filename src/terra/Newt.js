@@ -18,6 +18,7 @@ const FOOT_Y = 0.62;               // gövde yere yakın: dirsekler yana açık,
 const TRUNK_MID = -0.2;            // dönüş ekseni: gövde ortası (model x)
 const SPRAWL = 0.32;               // semenderin yayvan duruşu: üst kol/uyluk yataya yakın
 const UNKEN = 1;                   // unken kavisinin yönü (model ekseni)
+const CLOSED_JAW = -0.32;          // calibrated against the scan: exported rest pose is feeding gape
 const STEP_LIFT = 0.28;            // salınımda ayak yerden en çok bu kadar kalkar (cm, boyla ölçeklenir)
 
 const TRUNK = ['Bone_109', 'Bone001_84', 'Bone018_83', 'Bone002_82', 'Bone003_81', 'Bone016_80', 'Bone004_79', 'Bone005_78'];
@@ -138,6 +139,10 @@ export class Newt extends Agent {
     this.strikeT = 0;
     this.swallowT = 0;
     this.breath = this.rand() * 10;
+    this.breathRate = 0.8 + this.rand() * 0.35;
+    this.strokeTimer = 0;
+    this.strokeActive = true;
+    this.swimDrive = 1;
     this.pitch = 0;
     this.roll = 0;
     this.bendSmooth = 0;
@@ -310,12 +315,20 @@ export class Newt extends Agent {
   }
 
   update(dt, lod = 0) {
+    if (!(dt > 0) || !Number.isFinite(dt)) return;
     dt = Math.min(dt, 0.05);
     this.metabolism(dt);
     this.root.scale.setScalar(this.data.size);
     const prevState = this.state;
     this.state = null;
     this.brain.tick(this, dt);
+    this.strokeTimer -= dt;
+    if (this.strokeTimer <= 0) {
+      this.strokeActive = !this.strokeActive;
+      this.strokeTimer = this.strokeActive ? 0.7 + this.rand() * 1.4 : 0.4 + this.rand() * 1.1;
+    }
+    const drive = this.state === 'strike' || this.state === 'flee' || this.state === 'air' || this.strokeActive ? 1 : 0.12;
+    this.swimDrive += (drive - this.swimDrive) * (1 - Math.exp(-dt * 5));
     this.move(dt);
     this.watchdog(dt);
     if (!this.state) {
@@ -474,6 +487,7 @@ export class Newt extends Agent {
     const st = this.state;
     const actQ = THREE.MathUtils.clamp(this.q, 0.4, 1.3) * (this.needs.health < 30 ? 0.5 : 1);
     let want = mv.speed * (st === 'strike' ? 1 : actQ);
+    if (this.inWater && st !== 'strike') want *= 0.65 + this.swimDrive * 0.35;
     let turnTo = this.heading;
     const goal = mv.to ?? mv.face;
     if (goal) { turnTo = Math.atan2(goal.x - this.pos.x, goal.z - this.pos.z); this.aim.copy(goal); }
@@ -503,9 +517,12 @@ export class Newt extends Agent {
     if (Math.abs(err) > 1.2 && st !== 'strike') want *= 0.25;   // önce yerinde dön
     this.speed += (want - this.speed) * Math.min(1, dt * (st === 'strike' ? 20 : this.inWater ? 1.5 : 3));
 
+    const oldX = this.pos.x, oldZ = this.pos.z;
     this.pos.x += Math.sin(this.heading) * this.speed * dt;
     this.pos.z += Math.cos(this.heading) * this.speed * dt;
     this.constrain();
+    const travelled = (this.pos.x - oldX) * Math.sin(this.heading) + (this.pos.z - oldZ) * Math.cos(this.heading);
+    this.speed = Math.min(this.speed, Math.max(0, travelled / Math.max(dt, 1e-4)));
 
     // yükseklik: karada zemine bas, suda yüz
     const ground = w.ground(this.pos.x, this.pos.z);
@@ -550,7 +567,7 @@ export class Newt extends Agent {
       this.wd = null;
       const a = this.brain.current;
       if (a) { a.end?.(this, null); this.brain.current = null; this.brain.history.unshift({ t: this.eco.time, id: a.id, why: 'yol bulamadı', end: true }); }
-      this.heading += (this.rand() - 0.5) * 2;
+      this.detourT = 0;
       this.brain.decide(this);
     }
   }
@@ -626,7 +643,7 @@ export class Newt extends Agent {
     // --- yüzme: kuyruktan geriye akan dalga, bacaklar gövdeye yapışık
     const swimF = 0.6 + Math.abs(this.speed) * 0.35 + (st === 'air' ? 0.6 : 0);
     this.swimPhase += swimF * dt * Math.PI * 2 * Math.max(sb, 0.001);
-    const swimAmp = sb * (st === 'rest' ? 0.15 : 0.35 + Math.min(this.speed, 5) * 0.06);
+    const swimAmp = sb * (st === 'rest' ? 0.008 : (0.18 + Math.min(this.speed, 5) * 0.09) * this.swimDrive);
 
     // gövde (omurga) — kara: tek kavis (C) salınımı; su: geriye ilerleyen dalga
     const bend = 0.1 * moving * Math.cos(p2);   // önde olan ön ayağın tarafı dışbükey
@@ -658,7 +675,7 @@ export class Newt extends Agent {
     // kuyruk: karada sürüklenip hafifçe salınır, suda asıl itici
     TAIL.forEach((n, i) => {
       const t = (i + 1) / TAIL.length;
-      const land = moving * 0.06 * Math.sin(p2 - 1.2 - t * 2.2) + 0.02 * Math.sin(this.breath * 0.4 + t * 3) * lb;
+      const land = moving * 0.06 * Math.sin(p2 - 1.2 - t * 2.2) + 0.003 * Math.sin(this.breath * 0.4 + t * 3) * lb;
       const water = swimAmp * (0.25 + t * 0.9) * Math.sin(this.swimPhase - 1.6 - t * 3.2) * 0.42;
       j[n].rot(UP, land + water - this.bendSmooth * 0.6);
       if (uk > 0.001) { j[n].rot(LAT, UNKEN * uk * (0.03 + t * 0.13)); j[n].rot(UP, uk * 0.08 * t * Math.sin(this.breath * 2.2 - t * 4)); }
@@ -689,14 +706,18 @@ export class Newt extends Agent {
     }
 
     // baş: gövde salınımını dengeler, çevreye bakar, ava kilitlenir
-    this.breath += dt;
+    this.breath += dt * this.breathRate * (1 + this.needs.stress * 0.006 + Math.min(this.speed, 4) * 0.08);
     const lk = this.look;
     lk.timer -= dt;
     if (lk.timer < 0) {
-      lk.timer = 1.5 + Math.random() * 4;
+      lk.timer = st === 'rest' ? 4 + this.rand() * 10 : 1.5 + this.rand() * 4;
       const idle = st === 'rest';
-      lk.tyaw = idle ? (Math.random() - 0.5) * 0.7 : (Math.random() - 0.5) * 0.25;
-      lk.tpitch = idle ? (Math.random() - 0.4) * 0.25 : 0;
+      lk.tyaw = idle ? (this.rand() - 0.5) * 0.6 : (this.rand() - 0.5) * 0.25;
+      lk.tpitch = idle ? (this.rand() - 0.4) * 0.16 : 0;
+      if (this.sniffing) {
+        lk.tyaw = (this.rand() - 0.5) * 0.7 * this.sniffing;
+        lk.timer = 1.2 + this.rand() * 2.8;
+      }
     }
     const tgt = this.ht?.pos;
     if (tgt && (st === 'stalk' || st === 'strike')) {
@@ -705,7 +726,6 @@ export class Newt extends Agent {
       lk.tpitch = this.inWater ? 0 : 0.2;
     } else if (this.sniffing) {
       // koklarken burun aşağıda, baş yavaşça iki yana
-      lk.tyaw = Math.sin(this.breath * 1.3) * 0.4 * this.sniffing;
       lk.tpitch = 0.18 * this.sniffing;
     } else if (this.lookUp) { lk.tyaw = 0; lk.tpitch = -0.3; }
     if (st === 'shed') { lk.tyaw = Math.sin((this.shedPhase ?? 0) * 2.6) * 0.35; lk.tpitch = 0.25; }
@@ -722,12 +742,12 @@ export class Newt extends Agent {
     head.rot(LAT, -(lk.pitch + strikeDip * 0.35) + (st === 'air' ? 0.25 : 0) - uk * UNKEN * 0.45);
 
     // çene: avda açılıp kapanır, yutarken yutkunur, yüzeyde hava yutar; gırtlak pompası sürekli
-    let jaw = 0.012 * (0.5 + 0.5 * Math.sin(this.breath * 9));            // bukkal pompalama
+    let jaw = 0.002 * Math.max(0, Math.sin(this.breath * 4.5));            // bukkal pompalama
     if (st === 'strike') jaw = this.strikeT < 0.1 ? 0.32 * (this.strikeT / 0.1) : Math.max(0, 0.32 - (this.strikeT - 0.1) * 3);
     if (st === 'swallow') jaw = Math.max(0, Math.sin(this.swallowT * 5)) * 0.05;
     if (st === 'shed') jaw = Math.max(0, Math.sin((this.shedPhase ?? 0) * 3.1)) * 0.08;
     if (st === 'air' && this.pos.y > this.world.waterY - 0.8) jaw = Math.max(0, Math.sin(this.breath * 3)) * 0.22;
     this.jaw += (jaw - this.jaw) * Math.min(1, dt * 25);
-    j.Bone020_120.rot(LAT, -this.jaw);
+    j.Bone020_120.rot(LAT, CLOSED_JAW + this.jaw);
   }
 }

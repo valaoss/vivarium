@@ -1088,6 +1088,7 @@ export class Game {
 
   // ---------------------------------------------------------------- Döngü
   update(dt) {
+    if (!(dt > 0) || !Number.isFinite(dt)) return;
     dt = Math.min(dt, 0.05);
     this.time += dt;
     WU.uTime.value = this.time;
@@ -1144,7 +1145,7 @@ export class Game {
     for (let i = 0; i < WU.uWake.value.length; i++) {
       const c = this.creatures[i];
       const wake = WU.uWake.value[i], velocity = WU.uWakeVelocity.value[i];
-      if (c?.vel) {
+      if (c?.vel && Number.isFinite(c.pos.lengthSq()) && Number.isFinite(c.vel.lengthSq())) {
         wake.set(c.pos.x, c.pos.y, c.pos.z, Math.max(1.2, c.total * 0.65));
         velocity.lerp(c.vel, 1 - Math.exp(-bdt * 8));
       } else { wake.set(0, -100, 0, 0); velocity.set(0, 0, 0); }

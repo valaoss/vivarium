@@ -255,13 +255,13 @@ export class Terrarium {
     if (!this.pondDepth) return;
     const { data, width, height } = this.pondDepth.image;
     for (let z = 0; z < height; z++) for (let x = 0; x < width; x++) {
-      data[z * width + x] = Math.max(0, WATER_Y - groundHeight((x + 0.5) / width * W - W / 2, (z + 0.5) / height * D - D / 2));
+      data[z * width + x] = Math.round(255 * Math.max(0, WATER_Y - groundHeight((x + 0.5) / width * W - W / 2, (z + 0.5) / height * D - D / 2)) / WATER_Y);
     }
     this.pondDepth.needsUpdate = true;
   }
 
   buildWater() {
-    this.pondDepth = new THREE.DataTexture(new Float32Array(256 * 192), 256, 192, THREE.RedFormat, THREE.FloatType);
+    this.pondDepth = new THREE.DataTexture(new Uint8Array(256 * 192), 256, 192, THREE.RedFormat, THREE.UnsignedByteType);
     this.pondDepth.minFilter = this.pondDepth.magFilter = THREE.LinearFilter;
     this.updatePondDepth();
     this.reflection = new PlanarReflection(this.renderer, this.scene, WATER_Y, { scale: MOBILE ? 0.25 : 0.4 });
@@ -293,7 +293,7 @@ export class Terrarium {
           return h;
         }
         void main() {
-          float depth = texture2D(uDepth, vWp.xz / vec2(60.0, 45.0) + 0.5).r;
+          float depth = texture2D(uDepth, vWp.xz / vec2(60.0, 45.0) + 0.5).r * 5.5;
           if (depth < 0.015) discard;
           float e = 0.08;
           vec2 p = vWp.xz;
@@ -608,6 +608,7 @@ export class Terrarium {
 
   // ---------------------------------------------------------------- Döngü
   update(dt) {
+    if (!(dt > 0) || !Number.isFinite(dt)) return;
     dt = Math.min(dt, 0.1);
     // simülasyon hızı (gözlem paneli): alt adımlara bölünür
     const total = dt * this.speedMul;

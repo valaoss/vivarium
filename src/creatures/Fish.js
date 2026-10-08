@@ -101,7 +101,9 @@ export class Fish extends Agent {
     this.u.uMouthY.value = this.mouthLocal.y;
     this.mouthOpen = 0;
     this.gill = 0;
-    this.breath = Math.random() * 6;
+    this.breath = this.rand() * Math.PI * 2;
+    this.breathRate = 0.75 + this.rand() * 0.5;
+    this.motionPhase = this.rand() * Math.PI * 2;
     this.feed = null;
     this.gait = GAIT[data.species] ?? 'steady';
     this.u.uEel.value = this.gait === 'eel' ? 1 : 0;
@@ -288,6 +290,7 @@ export class Fish extends Agent {
 
   /** Davranış: her karede. `world` ortak bağlam (diğer canlılar, yem, gece, oksijen...) */
   update(dt, world) {
+    if (!(dt > 0) || !Number.isFinite(dt)) return;
     const sp = this.sp;
     const d = this.data;
     const pos = this.pos;
@@ -309,6 +312,7 @@ export class Fish extends Agent {
     this.thinkAcc = (this.thinkAcc ?? Math.random() * this.thinkInterval) + dt;
     if (this.thinkAcc >= this.thinkInterval) { this.sense(this.thinkAcc); this.decayPercepts(this.thinkAcc); this.brain.decide(this); this.thinkAcc = 0; }
     this.mouthTarget = 0;
+    this.gillTarget = 0;
     this.quiver = 0;
     this.faceDir = null;
     this.brain.tick(this, dt);
@@ -536,10 +540,6 @@ export class Fish extends Agent {
     const dvl = dv.length();
     if (dvl > accel * dt) dv.multiplyScalar((accel * dt) / dvl);
     this.vel.add(dv);
-    pos.addScaledVector(this.vel, dt);
-    pos.x = THREE.MathUtils.clamp(pos.x, -HALF_W + 1, HALF_W - 1);
-    pos.z = THREE.MathUtils.clamp(pos.z, -HALF_D + 1, HALF_D - 1);
-    pos.y = THREE.MathUtils.clamp(pos.y, lo - 0.3, TANK.water - 0.4);
 
     const spd = this.vel.length();
     const face = !!this.faceDir;
@@ -579,6 +579,19 @@ export class Fish extends Agent {
       this.fwd.y *= Math.exp(-dt * 3.1); this.fwd.normalize();
     }
 
+    // Body heading limits lateral acceleration: a cruising fish cannot slide
+    // sideways while its nose is still completing a turn.
+    if (!face && spd > 0.4) {
+      const horizontal = Math.hypot(this.vel.x, this.vel.z);
+      const forward = Math.max(1e-4, Math.hypot(this.fwd.x, this.fwd.z));
+      this.vel.x = this.fwd.x / forward * horizontal;
+      this.vel.z = this.fwd.z / forward * horizontal;
+    }
+    pos.addScaledVector(this.vel, dt);
+    pos.x = THREE.MathUtils.clamp(pos.x, -HALF_W + 1, HALF_W - 1);
+    pos.z = THREE.MathUtils.clamp(pos.z, -HALF_D + 1, HALF_D - 1);
+    pos.y = THREE.MathUtils.clamp(pos.y, lo - 0.3, TANK.water - 0.4);
+
     // yavrular büyüdükçe ölçek
     const sc = d.size ?? 1;
     if (Math.abs(this.group.scale.x - sc) > 0.001) { this.group.scale.setScalar(sc); this.total = this.baseTotal * sc; }
@@ -591,6 +604,7 @@ export class Fish extends Agent {
     if (!this.thrust) { amp = 0.008; freq *= 0.4; }                  // süzülürken gövde düz
     else if (this.gait === 'burst' && calm) { amp += 0.06; freq += 6; }
     if (this.gait === 'hover' && spd < 1.5) amp *= 0.5;             // yerinde asılı: yalnız yüzgeçler
+    if (state === 'sleep' || state === 'rest') { amp *= 0.12; freq *= 0.3; }
     this.u.uPhase.value += dt * freq;
     this.u.uAmp.value = THREE.MathUtils.lerp(this.u.uAmp.value, amp, 1 - Math.exp(-dt * (this.thrust ? 13.4 : 3.7)));
     const turnBend = THREE.MathUtils.clamp(-this.yawRate * 0.09, -0.35, 0.35);
@@ -598,15 +612,23 @@ export class Fish extends Agent {
     const bendT = this.cstart > 0 ? this.cside * 1.1 : turnBend + this.quiver * (0.22 + 0.08 * Math.sin(this.time2 = (this.time2 ?? 0) + dt * 40));
     this.bend = THREE.MathUtils.lerp(this.bend, bendT, 1 - Math.exp(-dt * (this.cstart > 0 ? 35.9 : 9.75)));
     this.u.uBend.value = this.bend;
-    this.u.uFlap.value += dt * (spd < 1.5 ? 11 : 4);
+    const asleep = state === 'sleep' || state === 'rest';
+    const displaying = state === 'flare' || state === 'court';
+    const finSpread = displaying ? 1.15 : asleep ? 0.35 : this.thrust ? 0.85 : 0.55;
+    const finActivity = asleep ? 0.07 : spd < 1.5 ? 0.65 : 0.3;
+    this.u.uFinSpread.value += (finSpread - this.u.uFinSpread.value) * (1 - Math.exp(-dt * 4));
+    this.u.uFinActivity.value += (finActivity - this.u.uFinActivity.value) * (1 - Math.exp(-dt * 6));
+    this.u.uFlap.value += dt * (asleep ? 2 : spd < 1.5 ? 8 : 4) * this.breathRate;
     this.u.uIch.value = THREE.MathUtils.lerp(this.u.uIch.value, d.ich ?? 0, 0.05);
     // Nefes: ağız ve solungaç kapakları ritmik olarak açılıp kapanır (stresle hızlanır)
-    this.breath += dt * (5 + d.stress * 0.05 + (world.o2 < 40 ? 4 : 0));
-    const breathe = 0.5 + 0.5 * Math.sin(this.breath);
-    const mouthT = Math.max(this.mouthTarget ?? 0, breathe * 0.12);
+    this.motionPhase += dt * 0.37;
+    this.breath += dt * (asleep ? 3 : 5 + d.stress * 0.05 + (world.o2 < 40 ? 4 : 0))
+      * this.breathRate * (1 + 0.1 * Math.sin(this.motionPhase));
+    const breathe = Math.max(0, Math.sin(this.breath)) ** 1.6;
+    const mouthT = Math.max(this.mouthTarget ?? 0, breathe * (asleep ? 0.035 : 0.08 + d.stress * 0.0006));
     this.mouthOpen += (mouthT - this.mouthOpen) * Math.min(1, dt * (mouthT > this.mouthOpen ? 35 : 14));
     this.u.uMouth.value = this.mouthOpen;
-    this.gill += (Math.max(this.gillTarget ?? 0, (1 - breathe) * 0.35) - this.gill) * Math.min(1, dt * 12);
+    this.gill += (Math.max(this.gillTarget ?? 0, (0.5 + 0.5 * Math.sin(this.breath - 0.8)) * (asleep ? 0.12 : 0.35)) - this.gill) * Math.min(1, dt * 12);
     this.u.uGill.value = this.gill;
     this.u.uPale.value = THREE.MathUtils.lerp(this.u.uPale.value, Math.max((100 - d.health) / 100, d.stress / 160), 0.05);
 

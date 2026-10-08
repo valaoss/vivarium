@@ -99,13 +99,16 @@ export class PlanarReflection {
     // derlenirken) geçtikten sonra ikinci kez hesaplanmasın.
     const prevShadow = renderer.shadowMap.autoUpdate;
     if (++this.frames > 3) renderer.shadowMap.autoUpdate = false;
-    renderer.setRenderTarget(this.target);
-    renderer.state.buffers.depth.setMask(true);
-    renderer.clear();
-    renderer.render(scene, cam);
-    renderer.setRenderTarget(prevTarget);
-    renderer.shadowMap.autoUpdate = prevShadow;
-    this.hidden.forEach((o, i) => { o.visible = vis[i]; });
+    try {
+      renderer.setRenderTarget(this.target);
+      renderer.state.buffers.depth.setMask(true);
+      renderer.clear();
+      renderer.render(scene, cam);
+    } finally {
+      renderer.setRenderTarget(prevTarget);
+      renderer.shadowMap.autoUpdate = prevShadow;
+      this.hidden.forEach((o, i) => { o.visible = vis[i]; });
+    }
   }
 }
 
@@ -190,12 +193,15 @@ export class PlaneMirror {
     const prevTarget = renderer.getRenderTarget();
     const prevShadow = renderer.shadowMap.autoUpdate;
     renderer.shadowMap.autoUpdate = false;
-    renderer.setRenderTarget(this.target);
-    renderer.state.buffers.depth.setMask(true);
-    renderer.clear();
-    renderer.render(scene, cam);
-    renderer.setRenderTarget(prevTarget);
-    renderer.shadowMap.autoUpdate = prevShadow;
-    this.hidden.forEach((o, i) => { o.visible = vis[i]; });
+    try {
+      renderer.setRenderTarget(this.target);
+      renderer.state.buffers.depth.setMask(true);
+      renderer.clear();
+      renderer.render(scene, cam);
+    } finally {
+      renderer.setRenderTarget(prevTarget);
+      renderer.shadowMap.autoUpdate = prevShadow;
+      this.hidden.forEach((o, i) => { o.visible = vis[i]; });
+    }
   }
 }
