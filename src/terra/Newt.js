@@ -4,6 +4,7 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 import { Agent, senseVision, senseVibration } from '../eco/Agent.js';
 import { Brain } from '../eco/Brain.js';
 import { NEWT_ACTIONS } from './newtActions.js';
+import { twoBoneIK, dropToGround } from '../eco/ik.js';
 
 // Japon kırmızı karınlı semenderi (Cynops pyrrhogaster), ffish.asia CC0 taraması.
 // Modeldeki tek animasyon bir solucan yeme sahnesi; yürüme, yüzme, nefes ve av hareketleri
@@ -16,6 +17,7 @@ const FOOT_Y = 0.62;               // gövde yere yakın: dirsekler yana açık,
 const TRUNK_MID = -0.2;            // dönüş ekseni: gövde ortası (model x)
 const SPRAWL = 0.32;               // semenderin yayvan duruşu: üst kol/uyluk yataya yakın
 const UNKEN = 1;                   // unken kavisinin yönü (model ekseni)
+const STEP_LIFT = 0.28;            // salınımda ayak yerden en çok bu kadar kalkar (cm, boyla ölçeklenir)
 
 const TRUNK = ['Bone_109', 'Bone001_84', 'Bone018_83', 'Bone002_82', 'Bone003_81', 'Bone016_80', 'Bone004_79', 'Bone005_78'];
 const TAIL = ['Bone006_51', 'Bone007_50', 'Bone008_49', 'Bone009_48', 'Bone010_47', 'Bone011_46', 'Bone012_45', 'Bone013_44', 'Bone014_43', 'Bone015_42', 'Bone017_41'];
@@ -35,6 +37,7 @@ const LONG = new THREE.Vector3(1, 0, 0);   // model x: kuyruğa doğru
 const LAT = new THREE.Vector3(0, 0, 1);    // model z: sol
 const _v = new THREE.Vector3(), _q = new THREE.Quaternion(), _w = new THREE.Vector3();
 const _hp = new THREE.Vector3(), _fw = new THREE.Vector3(), _lv = new THREE.Vector3(), _q1 = new THREE.Vector3();
+const _fk = new THREE.Vector3(), _tg = new THREE.Vector3(), _h = new THREE.Vector3(), _sv = new THREE.Vector3(), _tip = new THREE.Vector3(), _k = new THREE.Vector3();
 const smooth = (t) => t * t * (3 - 2 * t);
 const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 
@@ -114,6 +117,7 @@ export class Newt extends Agent {
     m.metalness = 0;
     if ('clearcoat' in m) { m.clearcoat = 0.3; m.clearcoatRoughness = 0.5; }
 
+    this.initFeet();
     const p = d.pos ?? [0, 0, 0];
     this.pos = new THREE.Vector3(...p);
     this.heading = d.heading ?? this.rand() * Math.PI * 2;
@@ -317,6 +321,146 @@ export class Newt extends Agent {
     if (this.state !== prevState && this.state === 'strike') this.strikeT = 0;
     if (lod < 2) this.animate(dt);
     this.place();
+    if (lod < 2) this.legIK(dt);
+  }
+
+  // ---------------------------------------------------------------- Ayaklar (zemine basan IK)
+  // Her bacağın doğal duruştaki el/ayak noktası (gövde uzayında), taban köşeleri ve parmak zincirleri
+  initFeet() {
+    const j = this.j;
+    for (const k in j) j[k].reset();
+    for (const key in LEGS) {
+      const L = LEGS[key];
+      const [, upper, lower] = L.bones.map((n) => j[n]);
+      upper.rot(UP, -L.side * (L.front ? 0.12 : -0.1));
+      upper.rot(LONG, -L.side * SPRAWL);
+      lower.rot(LONG, L.side * SPRAWL * 0.6);
+    }
+    this.root.updateMatrixWorld(true);
+    const geo = this.mesh.geometry, si = geo.attributes.skinIndex, sw = geo.attributes.skinWeight, pos = geo.attributes.position;
+    const bones = this.mesh.skeleton.bones;
+    this.feet = {};
+    for (const key in LEGS) {
+      const L = LEGS[key];
+      const foot = j[L.bones[3]].bone;
+      const set = new Set();
+      foot.traverse((b) => { if (b.isBone) set.add(bones.indexOf(b)); });
+      // tabana ait köşeler: ağırlığı el/ayak kemiklerinde olan, bağ pozunda en alttaki %35
+      const cand = [];
+      for (let i = 0; i < pos.count; i++) {
+        let best = 0, bi = -1;
+        for (let c = 0; c < 4; c++) { const wv = sw.getComponent(i, c); if (wv > best) { best = wv; bi = si.getComponent(i, c); } }
+        if (set.has(bi)) cand.push([i, this.mesh.getVertexPosition(i, _sv).applyMatrix4(this.mesh.matrixWorld).y]);
+      }
+      cand.sort((a, b) => a[1] - b[1]);
+      const low = cand.slice(0, Math.max(6, Math.round(cand.length * 0.35)));
+      const step = Math.max(1, Math.floor(low.length / 28));
+      const sole = low.filter((_, i) => i % step === 0).map((c) => c[0]);
+      // doğal duruş: dirsek/diz bükük, el omzun yanında (bacak tam gerilmez, adım için pay kalır)
+      j[L.bones[1]].bone.getWorldPosition(_k);
+      foot.getWorldPosition(_h);
+      const hx = _k.x + (_h.x - _k.x) * 0.72, hz = _k.z + (_h.z - _k.z) * 0.72;
+      const fingers = foot.children.filter((b) => b.isBone).map((b) => [b, b.children.find((c) => c.isBone)]);
+      this.feet[key] = {
+        home: new THREE.Vector3(hx, 0, hz), wristH: _h.y - low[0][1],
+        sole, fingers, plant: null, from: new THREE.Vector3(), wasSwing: false, force: -1, contact: 0,
+      };
+    }
+    for (const k in j) j[k].reset();
+  }
+
+  // karada kuyruk zemini izler: her omur bir sonrakini yere (kalınlığı kadar yukarıya) indirir; unken'de kalkık kalır
+  tailOnGround(lb) {
+    const w = this.world, sz = this.data.size, k = lb * (1 - smooth(this.unkenW));
+    if (k < 0.02) return;
+    this.root.updateMatrixWorld(true);
+    const gnd = (x, z) => w.ground(x, z);
+    for (let i = 0; i < TAIL.length - 1; i++) {
+      const t = i / (TAIL.length - 1);
+      this.j[TAIL[i + 1]].bone.getWorldPosition(_tip);
+      dropToGround(this.j[TAIL[i]].bone, _tip, gnd, (0.32 - t * 0.24) * sz, 0.45 * k);
+    }
+  }
+
+  // gövde uzayındaki noktayı dünyaya taşı (yalnız yatay: baş yönü ve boy)
+  bodyToWorld(lx, lz, out) {
+    const c = Math.cos(this.heading), s = Math.sin(this.heading), k = this.data.size;
+    return out.set(this.pos.x + (lx * c + lz * s) * k, 0, this.pos.z + (-lx * s + lz * c) * k);
+  }
+
+  legIK(dt) {
+    const lb = 1 - smooth(THREE.MathUtils.clamp(this.swimBlend, 0, 1));
+    if (lb < 0.02) { for (const k in this.feet) this.feet[k].plant = null; return; }
+    this.tailOnGround(lb);
+    const w = this.world, g = this.gait, sz = this.data.size;
+    const gnd = (x, z) => w.ground(x, z);
+    this.root.updateMatrixWorld(true);
+    const T = Math.min(3, 1 / Math.max(g.f, 1e-3));
+    const vx = Math.sin(this.heading) * this.speed, vz = Math.cos(this.heading) * this.speed;
+    const yr = this.yawRate ?? 0;
+    const predict = (F, tA, out) => {
+      this.bodyToWorld(F.home.x, F.home.z, out);
+      const a = yr * tA, dx = out.x - this.pos.x, dz = out.z - this.pos.z, c = Math.cos(a), s = Math.sin(a);
+      out.x = this.pos.x + dx * c + dz * s + vx * tA;
+      out.z = this.pos.z - dx * s + dz * c + vz * tA;
+      out.y = gnd(out.x, out.z);
+      return out;
+    };
+    const walking = g.moving > 0.05;
+    let stepping = false;
+    for (const k in this.feet) if (this.feet[k].force >= 0) stepping = true;
+    for (const key in LEGS) {
+      const L = LEGS[key], F = this.feet[key];
+      const [, upper, lower, foot] = L.bones.map((n) => this.j[n].bone);
+      foot.getWorldPosition(_fk);
+      if (!F.plant) F.plant = predict(F, 0, new THREE.Vector3());
+      const lp = (this.phase + L.off) % 1;
+      let swing = walking && lp >= g.duty, u = swing ? (lp - g.duty) / (1 - g.duty) : 0;
+      // dururken: gövde kaydıysa (dönüş, itilme) ayağı tek tek yeniden yerleştir
+      // ayak gövdeden fazla uzak kaldıysa (itilme, ani dönüş) ya da dururken gövde kaydıysa: hızlı ara adım
+      if (F.force >= 0) { F.force = Math.min(1, F.force + dt / 0.22); swing = F.force < 1; u = F.force; if (!swing) F.force = -1; }
+      else if (!swing) {
+        const off = predict(F, 0, _h).distanceTo(F.plant);
+        if ((!walking && !stepping && off > 0.8 * sz) || off > 1.25 * sz) { F.force = 0; stepping = true; swing = true; u = 0; }
+      }
+      if (swing && !F.wasSwing) F.from.copy(F.plant);
+      F.wasSwing = swing;
+      if (swing) {
+        const tA = walking && F.force < 0 ? (1 - u) * (1 - g.duty) * T + g.duty * T * 0.5 : (1 - u) * 0.22;
+        predict(F, tA, F.plant);
+        _tg.lerpVectors(F.from, F.plant, smooth(u));
+        // taşın kenarına çarpmasın: yol üstündeki en yüksek noktanın üstünden geç
+        const clear = Math.max(gnd(_tg.x, _tg.z), F.from.y + (F.plant.y - F.from.y) * smooth(u));
+        _tg.y = clear + STEP_LIFT * sz * Math.sin(Math.PI * u);
+      } else _tg.copy(F.plant);
+      _tg.y += F.wristH * sz;
+      _tg.lerpVectors(_fk, _tg, lb);
+      const planted = !swing || u < 0.08 || u > 0.92;
+      for (let it = 0; it < (planted ? 4 : 1); it++) {
+        twoBoneIK(upper, lower, foot, _tg);
+        // parmaklar zemine yatar (salınımda gevşek)
+        if (planted) for (const [f1, f2] of F.fingers) {
+          if (!f2) continue;
+          f1.getWorldPosition(_k); f2.getWorldPosition(_tip);
+          _tip.sub(_k).multiplyScalar(1.8).add(_k);
+          dropToGround(f1, _tip, gnd, 0.04 * sz, 0.7);
+          f1.getWorldPosition(_k); f2.getWorldPosition(_tip);
+          _tip.multiplyScalar(2).sub(_k);
+          dropToGround(f2, _tip, gnd, 0.03 * sz, 0.7);
+        }
+        if (!planted) break;
+        // taban köşelerinin en alçağı tam zemine değsin: boşluk da batma da olmasın
+        let m = Infinity;
+        for (const i of F.sole) {
+          this.mesh.getVertexPosition(i, _sv).applyMatrix4(this.mesh.matrixWorld);
+          m = Math.min(m, _sv.y - gnd(_sv.x, _sv.z));
+        }
+        F.contact = m;
+        F.reach = foot.getWorldPosition(_h).distanceTo(_tg);
+        if (Math.abs(m) < 0.004 || it === 3) break;
+        _tg.y -= m * lb;
+      }
+    }
   }
 
   move(dt) {
@@ -368,20 +512,27 @@ export class Newt extends Agent {
       this.vy += ((ty - this.pos.y) * 2 - this.vy) * Math.min(1, dt * 2);
       this.pos.y += this.vy * dt;
       this.pos.y = Math.max(this.pos.y, ground);
-    } else {
-      this.pos.y += (ground - this.pos.y) * Math.min(1, dt * 12);
-      this.vy = 0;
     }
 
-    // eğim: karada zeminin eğimi, suda dikey hız / yüzeye uzanma
-    const fx = Math.sin(this.heading), fz = Math.cos(this.heading);
-    const slope = Math.atan2(w.ground(this.pos.x + fx * 2.5, this.pos.z + fz * 2.5) - w.ground(this.pos.x - fx * 2.5, this.pos.z - fz * 2.5), 5);
+    // karada gövde dört ayağın altındaki zemine göre: yükseklik ortalama, eğim ön-arka, yatış sol-sağ
+    const F = this.feet, gh = {};
+    for (const k in F) { this.bodyToWorld(F[k].home.x, F[k].home.z, _h); gh[k] = w.ground(_h.x, _h.z); }
+    const fl = (F.LF.home.z + F.RF.home.z - F.LH.home.z - F.RH.home.z) * 0.5 * this.data.size;
+    const wd = (F.LF.home.x + F.LH.home.x - F.RF.home.x - F.RH.home.x) * 0.5 * this.data.size;
+    const slope = Math.atan2((gh.LF + gh.RF - gh.LH - gh.RH) * 0.5, fl);
     let tp = this.swimBlend > 0.5 ? THREE.MathUtils.clamp(-this.vy * 0.12, -0.5, 0.5) : -slope;
     if (st === 'air') tp = -0.75;
-    this.pitch += (tp - this.pitch) * Math.min(1, dt * 3);
-    const lx = -fz, lz = fx;
-    const side = Math.atan2(w.ground(this.pos.x + lx * 1.2, this.pos.z + lz * 1.2) - w.ground(this.pos.x - lx * 1.2, this.pos.z - lz * 1.2), 2.4);
-    this.roll += ((this.swimBlend > 0.5 ? 0 : side) - this.roll) * Math.min(1, dt * 4);
+    this.pitch += (tp - this.pitch) * Math.min(1, dt * 6);
+    const side = Math.atan2((gh.LF + gh.LH - gh.RF - gh.RH) * 0.5, wd);
+    this.roll += ((this.swimBlend > 0.5 ? 0 : side) - this.roll) * Math.min(1, dt * 6);
+    if (this.swimBlend <= 0.5) {
+      // karın ve kuyruk kökü yere gömülmesin
+      let ty = (gh.LF + gh.RF + gh.LH + gh.RH) / 4;
+      const sp = Math.sin(this.pitch), k = this.data.size;
+      for (const f of [2.2, 1, 0, -1.6, -3.5]) { this.bodyToWorld(0, f, _h); ty = Math.max(ty, w.ground(_h.x, _h.z) + f * k * sp - 0.3 * k); }
+      this.pos.y += (ty - this.pos.y) * Math.min(1, dt * 12);
+      this.vy = 0;
+    }
   }
 
   // takılma bekçisi: hedefe 15 sn boyunca hiç yaklaşamıyorsa eylemi bırakıp yeniden karar ver
@@ -430,8 +581,10 @@ export class Newt extends Agent {
         const x = this.pos.x + fx * f - fz * l, z = this.pos.z + fz * f + fx * l;
         px += Math.max(0, x0 + rad - x) - Math.max(0, x - (x1 - rad));
         pz += Math.max(0, z0 + rad - z) - Math.max(0, z - (z1 - rad));
+        // dik yüzey (mantar tüp, yüksek yosun kenarı): yokuş aşağı it
+        if (w.hf?.isSteep(x, z)) { const [gx, gz] = w.hf.grad(x, z), g = Math.hypot(gx, gz) || 1; px -= gx / g * 0.05; pz -= gz / g * 0.05; }
         for (const o of w.obstacles) {
-          if (o.top) continue;
+          if (o.top || o.solid) continue;
           const dx = x - o.x, dz = z - o.z, d = Math.hypot(dx, dz), min = o.r + rad;
           if (d < min && d > 1e-4) { px += dx / d * (min - d) * 0.5; pz += dz / d * (min - d) * 0.5; }
         }
@@ -457,12 +610,13 @@ export class Newt extends Agent {
     const st = this.state;
 
     // --- yürüme: çapraz bacak çiftleri, gövde duran dalga ile S çizer
-    const STRIDE = 2.4;   // bir döngüde alınan yol (cm): duruş evresinde ayağın geriye kaydığı yol / duty
+    const STRIDE = 1.6 * this.data.size;   // bir döngüde alınan yol (cm); duruşta ayak bunun duty katı kadar geriye süpürülür
     const gait = Math.max(Math.abs(this.speed), Math.abs(this.yawRate ?? 0) * 2.2);
     const f = gait / STRIDE;
     this.phase = (this.phase + f * dt * lb) % 1;
     const moving = THREE.MathUtils.clamp(gait / 1.2, 0, 1) * lb;
     const duty = 0.68, A = 0.8, LIFT = 0.45;
+    this.gait = { duty, moving, f };
     const p2 = this.phase * Math.PI * 2;
 
     // --- yüzme: kuyruktan geriye akan dalga, bacaklar gövdeye yapışık

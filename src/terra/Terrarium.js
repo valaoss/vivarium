@@ -6,6 +6,7 @@ import { pbrSet } from '../render/assets.js';
 import { fbm3, mulberry } from '../render/textures.js';
 import { Newt, loadNewt } from './Newt.js';
 import { Ecosystem } from '../eco/Ecosystem.js';
+import { bakeHeightfield } from './heightfield.js';
 
 // Exo Terra tarzı 60 × 45 × 45 cm cam teraryum; içinde yarı karasal semender için gölet
 const W = 60, D = 45, H = 45;
@@ -64,15 +65,17 @@ export class Terrarium {
   toast(text, kind = 'info') { this.emit('toast', { text, kind }); }
 
   // ---------------------------------------------------------------- Dünya sorguları (semender için)
-  ground(x, z) {
-    let h = groundHeight(x, z);
-    for (const o of this.obstacles) if (o.top && Math.hypot(x - o.x, z - o.z) < o.r * 0.7) h = Math.max(h, o.top);
-    return h;
-  }
-  depthAt(x, z) { return WATER_Y - groundHeight(x, z); }
+  // yükseklik haritası görünen yüzeyden çıkarılır (yosun, yaprak, mantar dahil)
+  ground(x, z) { return this.hf ? this.hf.at(x, z) : groundHeight(x, z); }
+  groundNormal(x, z, out) { return this.hf ? this.hf.normal(x, z, out) : out.set(0, 1, 0); }
+  depthAt(x, z) { return WATER_Y - this.ground(x, z); }
   blocked(x, z, m) {
     if (Math.abs(x) > W / 2 - 3 - m || Math.abs(z) > D / 2 - 3 - m) return true;
-    for (const o of this.obstacles) if (!o.top && Math.hypot(x - o.x, z - o.z) < o.r + m) return true;
+    for (const o of this.obstacles) if (!o.top && !o.solid && Math.hypot(x - o.x, z - o.z) < o.r + m) return true;
+    if (this.hf) {
+      if (this.hf.isSteep(x, z)) return true;
+      for (let a = 0; a < 6.28 && m > 0.2; a += 1.0472) if (this.hf.isSteep(x + Math.cos(a) * m, z + Math.sin(a) * m)) return true;
+    }
     return false;
   }
   get hide() { return this.hidePos; }
@@ -297,7 +300,7 @@ export class Terrarium {
     tube.position.set(tx, groundHeight(tx, tz) - 2, tz);
     this.fit(tube, 0.6, false);
     this.scene.add(tube);
-    this.obstacles.push({ x: tube.position.x, z: tube.position.z, r: 6 });
+    this.obstacles.push({ x: tube.position.x, z: tube.position.z, r: 6, solid: true });
     this.hidePos = new THREE.Vector3(tx - 5, 0, tz + 6);
 
     // yosun yamaları: kare taramanın kenarları gürültüyle eritilir
@@ -306,6 +309,8 @@ export class Terrarium {
       const m = o.material;
       m.color.setRGB(0.36, 0.5, 0.22);
       m.alphaTest = 0.5;
+      m.userData.heightDiscard = `{ vec2 q = vMapUv - 0.5; float n = fract(sin(dot(floor(vMapUv * 40.0), vec2(12.9898, 78.233))) * 43758.5453);
+        if (length(q) + sin(atan(q.y, q.x) * 5.0) * 0.05 + n * 0.06 > 0.42) discard; }`;
       m.onBeforeCompile = (sh) => {
         sh.fragmentShader = sh.fragmentShader.replace('#include <alphatest_fragment>', `
           { vec2 q = vMapUv - 0.5; float n = fract(sin(dot(floor(vMapUv * 40.0), vec2(12.9898, 78.233))) * 43758.5453);
@@ -314,13 +319,16 @@ export class Terrarium {
           #include <alphatest_fragment>`);
       };
     });
+    const walk = [this.groundMesh, tube];
     for (const [x, z, s] of [[5, -12, 16], [-22, -12, 14], [22, 6, 13], [-1, 2, 10], [9, 12, 9], [-26, 0, 9]]) {
       const m = norm(moss.clone(), s);
       m.scale.y *= 0.6;
       m.position.set(x, groundHeight(x, z) - 0.35, z);
       m.rotation.y = r() * 6.28;
       this.fit(m, 0.4, true, 0.35);
+      drapeOnGround(m, 0.12);
       this.scene.add(m);
+      walk.push(m);
       // yosun yastığı yürünebilir bir yükselti: semender üstüne basar, içinden geçmez
       const mb = new THREE.Box3().setFromObject(m);
       this.obstacles.push({ x: m.position.x, z: m.position.z, r: Math.min(mb.max.x - mb.min.x, mb.max.z - mb.min.z) * 0.45, top: m.position.y + (mb.max.y - m.position.y) * 0.55 });
@@ -344,12 +352,15 @@ export class Terrarium {
     placePlant(part(fern, 'fern_02_d'), -27, -2, 16);
 
     // yaprak döküntüsü: kurumuş çeşitli yapraklar
-    this.scene.add(leafLitter(this, 70));
+    const litter = leafLitter(this, 70);
+    this.scene.add(litter);
+    walk.push(litter);
+    this.hf = bakeHeightfield(this.renderer, walk, { w: W, d: D, top: H });
 
     // semender
     await loadNewt();
     const d = this.state.newt;
-    this.newt = new Newt(this, d.pos ? d : { ...d, pos: [-4, groundHeight(-4, 0), 0] });
+    this.newt = new Newt(this, d.pos ? d : { ...d, pos: [-4, this.ground(-4, 0), 0] });
     this.scene.add(this.newt.root);
     this.eco.add(this.newt);
     this.emit('ready');
@@ -377,7 +388,7 @@ export class Terrarium {
 
   // ---------------------------------------------------------------- Yem ve sis
   dropWorm(x, z) {
-    const y = groundHeight(x, z);
+    const y = this.ground(x, z);
     const worm = makeWorm();
     const inWater = y < WATER_Y - 0.3;
     worm.position.set(x, inWater ? WATER_Y - 0.2 : y + 0.15, z);
@@ -540,7 +551,7 @@ export class Terrarium {
       v[i * 3 + 1] = v[i * 3 + 1] * (1 - dt * 1.4) - dt * 1.2;
       for (let a = 0; a < 3; a++) this.mistPos[i * 3 + a] += v[i * 3 + a] * dt;
       const x = this.mistPos[i * 3], y = this.mistPos[i * 3 + 1], z = this.mistPos[i * 3 + 2];
-      if (y < groundHeight(x, z) || Math.abs(x) > W / 2 || this.mistLife[i] <= 0) { this.mistLife[i] = 0; this.mistPos[i * 3 + 1] = -999; }
+      if (y < this.ground(x, z) || Math.abs(x) > W / 2 || this.mistLife[i] <= 0) { this.mistLife[i] = 0; this.mistPos[i * 3 + 1] = -999; }
     }
     this.mist.geometry.attributes.position.needsUpdate = true;
 
@@ -551,14 +562,14 @@ export class Terrarium {
       if (f.sink && Math.random() < dt * 3) this.eco.vibrate(f, f.pos, 'water', 0.45, 0.9, 1.2);
       m.userData.u.uTime.value = f.phase;
       if (f.sink) {
-        const floor = groundHeight(f.pos.x, f.pos.z) + 0.15;
+        const floor = this.ground(f.pos.x, f.pos.z) + 0.15;
         f.pos.y = Math.max(floor, f.pos.y - dt * 0.9);
       } else {
         // karada yavaşça sürünür
         m.rotation.y += Math.sin(f.phase * 0.7) * dt * 0.4;
         const sp = 0.25 * dt;
         const nx = f.pos.x + Math.sin(m.rotation.y) * sp, nz = f.pos.z + Math.cos(m.rotation.y) * sp;
-        if (groundHeight(nx, nz) > WATER_Y && !this.blocked(nx, nz, -1.5)) { f.pos.x = nx; f.pos.z = nz; f.pos.y = groundHeight(nx, nz) + 0.12; } else m.rotation.y += dt * 1.2;   // su kenarında yavaşça geri döner
+        if (this.ground(nx, nz) > WATER_Y && !this.blocked(nx, nz, -1.5)) { f.pos.x = nx; f.pos.z = nz; f.pos.y = this.ground(nx, nz) + 0.12; } else m.rotation.y += dt * 1.2;   // su kenarında yavaşça geri döner
       }
     }
     this.updateHands(dt);
@@ -618,6 +629,30 @@ function meshTexture(nx, ny) {
   const t = new THREE.CanvasTexture(c);
   t.anisotropy = 8;
   return t;
+}
+
+// Düz taranmış yamayı zemine giydir: her köşe kendi altındaki zeminin üstüne, kalınlığı korunarak iner
+function drapeOnGround(obj, sink) {
+  obj.updateMatrixWorld(true);
+  const v = new THREE.Vector3(), inv = new THREE.Matrix4();
+  obj.traverse((o) => {
+    if (!o.isMesh) return;
+    o.geometry = o.geometry.clone();
+    const p = o.geometry.attributes.position;
+    inv.copy(o.matrixWorld).invert();
+    let y0 = Infinity;
+    for (let i = 0; i < p.count; i++) y0 = Math.min(y0, v.fromBufferAttribute(p, i).applyMatrix4(o.matrixWorld).y);
+    for (let i = 0; i < p.count; i++) {
+      v.fromBufferAttribute(p, i).applyMatrix4(o.matrixWorld);
+      v.y = groundHeight(v.x, v.z) - sink + (v.y - y0);
+      v.applyMatrix4(inv);
+      p.setXYZ(i, v.x, v.y, v.z);
+    }
+    p.needsUpdate = true;
+    o.geometry.computeVertexNormals();
+    o.geometry.computeBoundingBox();
+    o.geometry.computeBoundingSphere();
+  });
 }
 
 function leafLitter(world, n) {
