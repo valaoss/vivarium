@@ -243,6 +243,16 @@ export class Game {
 
   bakeGround() {
     this.hf = bakeHeightfield(this.renderer, [this.substrate.group], { w: TANK.w, d: TANK.d, top: TANK.h, res: 0.15 });
+    this.settlePlants();
+  }
+  // Dekor değişince (taş, kök taşındı) altında bir şey kalmayan bitki, görünen yüzeye iner
+  settlePlants() {
+    for (const p of this.plants.plants) {
+      if (p.type === 'frogbit') continue;
+      let top = -Infinity;
+      for (let dx = -1; dx <= 1; dx += 0.5) for (let dz = -1; dz <= 1; dz += 0.5) top = Math.max(top, this.ground(p.x + dx, p.z + dz));
+      if (p.y > top + 0.3) { p.y = top - 0.3; this.plants.layout(p); }
+    }
   }
   ground(x, z) { return this.hf ? this.hf.at(x, z) : sandHeight(x, z); }
 
