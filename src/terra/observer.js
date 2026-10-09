@@ -47,6 +47,10 @@ export function createObserver(terra, root, cfg) {
   g.visible = false;
 
   let on = false, sel = null, follow = false, acc = 0;
+  terra.controls.addEventListener('start', () => {
+    follow = false;
+    panel.querySelector('[data-act="follow"]').classList.remove('on');
+  });
   const camOff = new THREE.Vector3();
   const set = (v) => { on = v; panel.classList.toggle('hidden', !on); g.visible = on && !!sel; terra.observing = on; };
   panel.querySelector('.obs-x').onclick = () => set(false);

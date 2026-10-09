@@ -226,6 +226,12 @@ export function createFoodMesh(max = 240) {
   }
   const mat = patchUnderwater(new THREE.MeshStandardMaterial({ color: 0xd08a3a, roughness: 0.8, side: THREE.DoubleSide }), { key: 'food' });
   const mesh = new THREE.InstancedMesh(geo, mat, max);
+  // Pigment varies between flakes; one instanced draw keeps feeding bounded.
+  const flakeColor = new THREE.Color();
+  for (let i = 0; i < max; i++) {
+    flakeColor.setHSL(0.055 + Math.random() * 0.055, 0.42 + Math.random() * 0.2, 0.48 + Math.random() * 0.16);
+    mesh.setColorAt(i, flakeColor);
+  }
   mesh.count = 0;
   mesh.frustumCulled = false;
   mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);

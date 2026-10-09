@@ -730,9 +730,15 @@ export class Terrarium {
     const ndc = new THREE.Vector2();
     let down = null;
     this.mode = 'view';
-    this.canvas.addEventListener('pointerdown', (e) => { down = [e.clientX, e.clientY]; });
+    this.canvas.addEventListener('pointerdown', (e) => {
+      down = this.controls.touchGesture.multiple && e.pointerType === 'touch' ? null : [e.clientX, e.clientY];
+    });
+    this.canvas.addEventListener('pointercancel', () => { down = null; });
     this.canvas.addEventListener('pointerup', (e) => {
-      if (!down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 6) return;
+      const start = down;
+      down = null;
+      if (this.controls.touchGesture.multiple && e.pointerType === 'touch') return;
+      if (!start || Math.hypot(e.clientX - start[0], e.clientY - start[1]) > 6) return;
       ndc.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
       ray.setFromCamera(ndc, this.camera);
       if (this.mode === 'feed') {

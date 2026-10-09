@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { updateTubeGeometry } from './dynamicTube.js';
 import { TANK, HALF_W, HALF_D } from '../config.js';
 import { sandHeight } from './substrate.js';
 
@@ -28,7 +29,15 @@ export function createSiphon(floorY) {
   group.add(cap);
   // esnek hortum (yarı saydam yeşilimsi PVC)
   const hoseMat = new THREE.MeshPhysicalMaterial({ color: 0x9fc4b2, roughness: 0.25, transparent: true, opacity: 0.55, clearcoat: 0.6, depthWrite: false });
-  const hose = new THREE.Mesh(new THREE.BufferGeometry(), hoseMat);
+  const hosePoints = Array.from({ length: 6 }, (_, i) => new THREE.Vector3(0, i, 0));
+  const hoseCurve = new THREE.CatmullRomCurve3(hosePoints, false, 'centripetal');
+  const hoseSegments = 64, hoseSides = 8;
+  const hoseGeometry = new THREE.TubeGeometry(hoseCurve, hoseSegments, 0.65, hoseSides, false);
+  hoseGeometry.attributes.position.setUsage(THREE.DynamicDrawUsage);
+  hoseGeometry.attributes.normal.setUsage(THREE.DynamicDrawUsage);
+  const hose = new THREE.Mesh(hoseGeometry, hoseMat);
+  const rimRotation = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI / 2);
+  const obstacleList = Array.from({ length: 6 }, () => ({ pos: new THREE.Vector3(), r: 3.5, core: 2.2 }));
   hose.renderOrder = 7;
   group.add(hose);
   // kova: zeminde, dolabın önünde
@@ -75,7 +84,7 @@ export function createSiphon(floorY) {
       m.scale.set(1, len, 1);
     }
     rim.position.copy(tip);
-    rim.quaternion.copy(_q).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI / 2));
+    rim.quaternion.copy(_q).multiply(rimRotation);
     cap.position.copy(top).addScaledVector(_a, 1.0);
     cap.quaternion.copy(_q);
     // hortum: bağlantıdan cam kenarının üstünden dışarı, dolabın önünden kovaya
@@ -91,8 +100,9 @@ export function createSiphon(floorY) {
         new THREE.Vector3(bucketPos.x - 4, floorY + 40, bucketPos.z - 6),
         new THREE.Vector3(bucketPos.x - 3, floorY + 22, bucketPos.z - 3),
       ];
-      hose.geometry.dispose();
-      hose.geometry = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts, false, 'centripetal'), 90, 0.65, 10, false);
+      pts.forEach((p, i) => hosePoints[i].copy(p));
+      hoseCurve.updateArcLengths();
+      updateTubeGeometry(hoseGeometry, hoseCurve);
     }
   }
 
@@ -123,9 +133,8 @@ export function createSiphon(floorY) {
     },
     // balıkların kaçındığı boru boyunca küreler
     obstacles() {
-      const list = [];
-      for (let k = 0; k <= 5; k++) list.push({ pos: new THREE.Vector3().lerpVectors(tip, top, k / 5), r: 3.5, core: 2.2 });
-      return list;
+      for (let k = 0; k <= 5; k++) obstacleList[k].pos.lerpVectors(tip, top, k / 5);
+      return obstacleList;
     },
   };
 }
@@ -164,14 +173,34 @@ export function createJug() {
   // su sütunu: ince, hafif titreyen, aşağı doğru incelen akıntı
   const streamMat = new THREE.ShaderMaterial({
     uniforms: { uTime: { value: 0 }, uOn: { value: 0 } },
-    vertexShader: `varying vec2 vUv; uniform float uTime; void main(){ vUv = uv; vec3 p = position; p.x += sin(uv.y * 30.0 + uTime * 20.0) * 0.04; gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0); }`,
-    fragmentShader: `varying vec2 vUv; uniform float uTime; uniform float uOn;
-      void main(){ float streak = 0.6 + 0.4 * sin(vUv.x * 40.0 + vUv.y * 6.0 - uTime * 30.0);
-        float edge = smoothstep(0.0, 0.25, vUv.x) * smoothstep(1.0, 0.75, vUv.x);
-        gl_FragColor = vec4(vec3(0.8, 0.92, 1.0) * streak, (0.35 + 0.4 * edge) * uOn); }`,
+    vertexShader: `
+      varying vec2 vUv; varying vec3 vNormalView, vView;
+      uniform float uTime;
+      void main() {
+        vUv = uv; vec3 p = position;
+        // A falling stream narrows as gravity accelerates it.
+        float width = sqrt(0.28 / (0.28 + (1.0 - uv.y) * 0.8));
+        p.xz *= width;
+        p.x += sin(uv.y * 24.0 - uTime * 18.0) * 0.035 * (1.0 - uv.y);
+        vec4 mv = modelViewMatrix * vec4(p, 1.0);
+        vView = -mv.xyz; vNormalView = normalize(normalMatrix * normal);
+        gl_Position = projectionMatrix * mv;
+      }`,
+    fragmentShader: `
+      varying vec2 vUv; varying vec3 vNormalView, vView;
+      uniform float uTime, uOn;
+      void main() {
+        float fresnel = pow(1.0 - abs(dot(normalize(vNormalView), normalize(vView))), 5.0);
+        float streak = pow(0.5 + 0.5 * sin(vUv.x * 44.0 + sin(vUv.y * 18.0 - uTime * 12.0)), 12.0);
+        vec3 col = mix(vec3(0.19, 0.26, 0.25), vec3(0.82, 0.91, 0.93), fresnel);
+        col += streak * 0.3;
+        gl_FragColor = vec4(col, (0.12 + fresnel * 0.66 + streak * 0.12) * uOn);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }`,
     transparent: true, depthWrite: false,
   });
-  const stream = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.4, 1, 12, 8, true), streamMat);
+  const stream = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.6, 1, 16, 12, true), streamMat);
   stream.renderOrder = 8;
   group.add(stream);
 

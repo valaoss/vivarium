@@ -95,7 +95,7 @@ export class Heightfield {
   }
   // bilineer yükseklik
   at(x, z) {
-    const [fx, fz] = this.idx(x, z);
+    const fx = (x + this.w / 2) / this.res - 0.5, fz = (z + this.d / 2) / this.res - 0.5;
     const i = Math.floor(fx), j = Math.floor(fz), u = fx - i, v = fz - j;
     const a = this.cell(i, j), b = this.cell(i + 1, j), c = this.cell(i, j + 1), e = this.cell(i + 1, j + 1);
     return (a * (1 - u) + b * u) * (1 - v) + (c * (1 - u) + e * u) * v;

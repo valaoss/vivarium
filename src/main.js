@@ -1,3 +1,4 @@
+import { trackFrameBudget } from './render/frameBudget.js';
 import { Game } from './game/Game.js';
 import { createHUD } from './ui/hud.js';
 import { Sound } from './audio/Sound.js';
@@ -30,10 +31,12 @@ function start() {
     hud.showWelcome(game.pendingWelcome, false);
   }
 
+  const trackFrame = trackFrameBudget(game);
   let last = null;
   function frame(now) {
     const dt = last === null ? 0 : Math.max(0, (now - last) / 1000);
     last = now;
+    trackFrame(dt);
     game.update(dt);
     game.renderFrame();
     hud.update(dt);

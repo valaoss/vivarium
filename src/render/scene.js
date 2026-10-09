@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { configureCameraInput } from './cameraInput.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { TANK, HALF_W, HALF_D, MOBILE } from '../config.js';
@@ -27,7 +28,7 @@ export function createControls(camera, dom) {
   c.target.set(0, TANK.h * 0.42, 0);
   c.enableDamping = true;
   c.dampingFactor = 0.07;
-  c.enablePan = false;
+  configureCameraInput(c, dom);
   c.minDistance = 30;
   c.maxDistance = 190;
   c.minPolarAngle = 0.55;

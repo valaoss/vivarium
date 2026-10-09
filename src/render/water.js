@@ -6,6 +6,8 @@ export const WU = {
   uFlow: { value: 0.25 },
   uWake: { value: Array.from({ length: 8 }, () => new THREE.Vector4(0, -100, 0, 0)) },
   uWakeVelocity: { value: Array.from({ length: 8 }, () => new THREE.Vector3()) },
+  uWakeTrail: { value: Array.from({ length: 8 }, () => new THREE.Vector4(0, -100, 0, 0)) },
+  uTrailVelocity: { value: Array.from({ length: 8 }, () => new THREE.Vector3()) },
   uTime: { value: 0 },
   uLamp: { value: 1 },                                   // lamba yoğunluğu 0..1
   uLampColor: { value: new THREE.Color(1, 0.98, 0.94) },
@@ -63,6 +65,7 @@ export function plantWaterMotion(shader, weight, floating = false) {
   shader.vertexShader = shader.vertexShader.replace('#include <common>', `#include <common>
     uniform float uFlow;
     uniform vec4 uWake[8]; uniform vec3 uWakeVelocity[8];
+    uniform vec4 uWakeTrail[8]; uniform vec3 uTrailVelocity[8];
     uniform vec3 uBoxMin, uBoxMax;
     ${floating ? 'uniform sampler2D tHeight; uniform float uWaveAmp;' + WAVES_GLSL : ''}`)
     .replace('#include <project_vertex>', `
@@ -80,8 +83,12 @@ export function plantWaterMotion(shader, weight, floating = false) {
           float radius = max(1.0, uWake[i].w);
           float influence = exp(-dot(delta, delta) / (radius * radius));
           push += uWakeVelocity[i] * influence * 0.055;
+          vec3 trailDelta = wp - uWakeTrail[i].xyz;
+          float trailRadius = max(1.0, uWakeTrail[i].w);
+          float trailInfluence = exp(-dot(trailDelta, trailDelta) / (trailRadius * trailRadius));
+          push += uTrailVelocity[i] * trailInfluence * 0.055;
         }
-        push *= clamp(${weight}, 0.0, 1.0);
+        push *= clamp(${weight}, 0.0, 1.0) * (1.0 - smoothstep(uBoxMax.y, uBoxMax.y + 0.6, wp.y));
         ${floating ? 'push.y += (texture2D(tHeight, (wp.xz - uBoxMin.xz) / extent).r + baseWaves(wp.xz, uTime, uWaveAmp).x) * 0.85;' : ''}
         transformed += vec3(dot(push, waterModel[0].xyz) / max(dot(waterModel[0].xyz, waterModel[0].xyz), 0.0001),
           dot(push, waterModel[1].xyz) / max(dot(waterModel[1].xyz, waterModel[1].xyz), 0.0001),

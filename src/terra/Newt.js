@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 import { Agent, senseVision, senseVibration } from '../eco/Agent.js';
+import { SkinSurface } from '../eco/skinSurface.js';
+import { turnVelocity } from '../creatures/motion.js';
 import { Brain } from '../eco/Brain.js';
 import { NEWT_ACTIONS } from './newtActions.js';
 import { twoBoneIK, dropToGround } from '../eco/ik.js';
@@ -69,7 +71,7 @@ class Joint {
 const VISION = { fovCos: -0.35, night: 0.45, still: 0.15, motionRef: 0.6, thresh: 0.06 };
 
 export class Newt extends Agent {
-  constructor(world, data = {}) {
+  constructor(world, data = {}, template = PROTO) {
     super(world.eco, { species: 'cynops', thinkInterval: 0.25, seed: data.seed });
     this.world = world;
     this.kind = 'newt';
@@ -93,7 +95,7 @@ export class Newt extends Agent {
     this.pitchGroup = new THREE.Group();
     this.root.add(this.pitchGroup);
 
-    const model = SkeletonUtils.clone(PROTO);
+    const model = SkeletonUtils.clone(template);
     model.updateMatrixWorld(true);
     const joints = {};
     model.traverse((o) => {
@@ -123,6 +125,7 @@ export class Newt extends Agent {
     this.mesh.material = m;
 
     this.initFeet();
+    this.skinSurface = new SkinSurface(this.mesh);
     const p = d.pos ?? [0, 0, 0];
     this.pos = new THREE.Vector3(...p);
     this.heading = d.heading ?? this.rand() * Math.PI * 2;
@@ -336,9 +339,29 @@ export class Newt extends Agent {
       else this.state = this.speed > 0.12 || Math.abs(this.yawRate) > 0.15 ? 'walk' : 'rest';
     }
     if (this.state !== prevState && this.state === 'strike') this.strikeT = 0;
-    if (lod < 2) this.animate(dt);
+    // Contact cannot be skipped with visual LOD: stale feet slide into slopes.
+    this.animate(dt);
+    this.clearanceOffset = (this.clearanceOffset ?? 0) * Math.exp(-dt * 8);
     this.place();
-    if (lod < 2) this.legIK(dt);
+    this.legIK(dt);
+    this.enforceSurfaceClearance();
+  }
+
+  // Final check of the actual skinned surface, including elbows, toes and tail.
+  // One pass, reused scratch vector; no raycasts or geometry allocations per frame.
+  enforceSurfaceClearance() {
+    this.root.updateMatrixWorld(true);
+    let lift = 0;
+    this.skinSurface.update();
+    for (let i = 0; i < this.skinSurface.count; i++) {
+      this.skinSurface.point(i, _sv);
+      lift = Math.max(lift, this.world.ground(_sv.x, _sv.z) + 0.015 - _sv.y);
+    }
+    if (lift > 0) {
+      this.clearanceOffset += lift;
+      this.root.position.y += lift;
+      this.root.updateMatrixWorld(true);
+    }
   }
 
   // ---------------------------------------------------------------- Ayaklar (zemine basan IK)
@@ -448,12 +471,12 @@ export class Newt extends Agent {
         _tg.lerpVectors(F.from, F.plant, smooth(u));
         // taşın kenarına çarpmasın: yol üstündeki en yüksek noktanın üstünden geç
         const clear = Math.max(gnd(_tg.x, _tg.z), F.from.y + (F.plant.y - F.from.y) * smooth(u));
-        _tg.y = clear + STEP_LIFT * sz * Math.sin(Math.PI * u);
+        _tg.y = clear + STEP_LIFT * sz * Math.sin(Math.PI * u) ** 2;
       } else _tg.copy(F.plant);
       _tg.y += F.wristH * sz;
       _tg.lerpVectors(_fk, _tg, lb);
       const planted = !swing || u < 0.08 || u > 0.92;
-      for (let it = 0; it < (planted ? 4 : 1); it++) {
+      for (let it = 0; it < 4; it++) {
         twoBoneIK(upper, lower, foot, _tg);
         // parmaklar zemine yatar (salınımda gevşek)
         if (planted) for (const [f1, f2] of F.fingers) {
@@ -465,7 +488,7 @@ export class Newt extends Agent {
           _tip.multiplyScalar(2).sub(_k);
           dropToGround(f2, _tip, gnd, 0.03 * sz, 0.7);
         }
-        if (!planted) break;
+
         // taban köşelerinin en alçağı tam zemine değsin: boşluk da batma da olmasın
         let m = Infinity;
         for (const i of F.sole) {
@@ -475,7 +498,8 @@ export class Newt extends Agent {
         F.contact = m;
         F.reach = foot.getWorldPosition(_h).distanceTo(_tg);
         if (Math.abs(m) < 0.004 || it === 3) break;
-        _tg.y -= m * lb;
+        if (!planted && m >= 0.015 * sz) break;
+        _tg.y += (0.015 * sz - m) * lb;
       }
     }
   }
@@ -511,7 +535,9 @@ export class Newt extends Agent {
     const err = wrap(turnTo - this.heading);
     const turnRate = (this.inWater ? 1.8 : 0.9) * actQ;
     const h0 = this.heading;
-    if (goal || want > 0) this.heading += THREE.MathUtils.clamp(err, -turnRate * dt, turnRate * dt);
+    this.turnSpeed = turnVelocity(goal || want > 0 ? err : 0, this.turnSpeed ?? 0, turnRate, this.inWater ? 4 : 2, dt);
+    const turnStep = this.turnSpeed * dt;
+    this.heading += Math.sign(turnStep) === Math.sign(err) ? Math.sign(err) * Math.min(Math.abs(err), Math.abs(turnStep)) : turnStep;
     // yerinde dönerken de ayaklar adım atar: dönüş hızını yürüme hızına çevir (ayak kayması olmasın)
     this.yawRate = (this.heading - h0) / Math.max(dt, 1e-4);
     if (Math.abs(err) > 1.2 && st !== 'strike') want *= 0.25;   // önce yerinde dön
@@ -618,6 +644,7 @@ export class Newt extends Agent {
 
   place() {
     this.root.position.copy(this.pos);
+    this.root.position.y += this.clearanceOffset ?? 0;
     this.root.rotation.set(0, this.heading, 0);
     this.pitchGroup.rotation.set(this.pitch, 0, this.roll);
   }

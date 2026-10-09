@@ -5,6 +5,8 @@ import { buildFish } from './fishGeometry.js';
 import { makeFishMaterials, makeFishUniforms } from './fishMaterial.js';
 import { makeRealFishMeshes, realModelKey, REAL_FISH, findMouth } from './realModels.js';
 import { sandHeight } from '../world/substrate.js';
+import { encounterTime } from './motion.js';
+import { waterCurrent } from '../render/water.js';
 import { Agent } from '../eco/Agent.js';
 import { Brain } from '../eco/Brain.js';
 import { FISH_ACTIONS, FISH_PROFILES, zonePoint } from './fishBrain.js';
@@ -469,8 +471,19 @@ export class Fish extends Agent {
     for (const o of world.fish) {
       if (o === this) continue;
       _v2.subVectors(pos, o.pos);
+      const min = (this.total + (o.total ?? o.sp?.body?.length ?? 1)) * 0.45;
+      const rvx = this.vel.x - (o.vel?.x ?? 0), rvy = this.vel.y - (o.vel?.y ?? 0), rvz = this.vel.z - (o.vel?.z ?? 0);
+      const ahead = encounterTime(_v2.x, _v2.y, _v2.z, rvx, rvy, rvz);
+      // Anticipate intersecting paths, retaining a consistent side in head-on encounters.
+      const cx = _v2.x + rvx * ahead, cy = _v2.y + rvy * ahead, cz = _v2.z + rvz * ahead;
+      const closest = Math.hypot(cx, cy, cz);
+      if (ahead > 0 && closest < min * 1.4) {
+        const yieldStrength = (1 - closest / (min * 1.4)) * (1 - ahead / 0.9);
+        acc.x += this.fwd.z * yieldStrength;
+        acc.z -= this.fwd.x * yieldStrength;
+        speed *= 1 - yieldStrength * 0.25;
+      }
       const L = _v2.length();
-      const min = (this.total + o.total) * 0.45;
       if (L < min && L > 1e-4) acc.addScaledVector(_v2, (min - L) / (min * L) * 2.5);
     }
     // Engeller (taş, kök, filtre)
@@ -588,6 +601,10 @@ export class Fish extends Agent {
       this.vel.z = this.fwd.z / forward * horizontal;
     }
     pos.addScaledVector(this.vel, dt);
+    // Fin control resists drift while hovering; coasting bodies follow the same
+    // circulation as the food and foliage, without adding current to muscle speed.
+    waterCurrent(pos, world.time ?? 0, world.flow ?? 0.25, _wc);
+    pos.addScaledVector(_wc, dt * (this.thrust ? 0.22 : 0.8));
     pos.x = THREE.MathUtils.clamp(pos.x, -HALF_W + 1, HALF_W - 1);
     pos.z = THREE.MathUtils.clamp(pos.z, -HALF_D + 1, HALF_D - 1);
     pos.y = THREE.MathUtils.clamp(pos.y, lo - 0.3, TANK.water - 0.4);

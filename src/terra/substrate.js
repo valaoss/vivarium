@@ -77,7 +77,7 @@ export function makeRelief(layers, weights) {
 }
 
 export function substrateMaterial(layers, waterY) {
-  const m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1 });
+  const m = new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 1, clearcoat: 0.35, clearcoatRoughness: 0.14 });
   const f = (v) => v.toFixed(4);
   m.onBeforeCompile = (sh) => {
     layers.forEach((L, i) => {
@@ -111,6 +111,10 @@ export function substrateMaterial(layers, waterY) {
         float sRough = mix(max(hb.g, 0.72), 0.38, wet * 0.8);
         diffuseColor.rgb *= alb;`)
       .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = sRough;')
+      .replace('#include <lights_physical_fragment>', `
+        #include <lights_physical_fragment>
+        material.clearcoat *= wet;
+      `)
       .replace('#include <normal_fragment_maps>', `{
         vec3 Ng = normalize(vWn);
         vec3 T = normalize(vec3(1.0, 0.0, 0.0) - Ng * Ng.x);

@@ -37,6 +37,7 @@ export class Game {
     this.scene = new THREE.Scene();
     this.camera = createCamera();
     this.controls = createControls(this.camera, canvas);
+    this.controls.addEventListener('start', () => { this.follow = false; });
     this.room = createRoom(this.scene, this.renderer);
     this.tank = createTank(this.scene);
     this.substrate = createSubstrate(this.scene);
@@ -1011,6 +1012,7 @@ export class Game {
   bindInput() {
     let down = null, wiping = false;
     this.canvas.addEventListener('pointerdown', (e) => {
+      if (this.controls.touchGesture.multiple && e.pointerType === 'touch') { stopCare(); return; }
       down = { x: e.clientX, y: e.clientY };
       if (this.mode === 'wipe') { wiping = true; this.canvas.style.cursor = 'grabbing'; this.wipeAt(this.rayFromEvent(e)); }
       if (this.mode === 'feed') { this.feederAt(e); this.feeder.pouring = true; this.pourLanded = false; this.canvas.setPointerCapture?.(e.pointerId); }
@@ -1019,9 +1021,10 @@ export class Game {
     });
     this.canvas.addEventListener('pointermove', (e) => {
       if (wiping) { this.wipeAt(this.rayFromEvent(e)); this.wiping = true; clearTimeout(this.wipeStop); this.wipeStop = setTimeout(() => { this.wiping = false; }, 90); }
-      if (this.mode === 'feed') this.feederAt(e);
-      if (this.mode === 'siphon') this.siphonAt(e);
-      if (this.mode === 'refill') this.jugAt(e);
+      // High-polling mice can send many events between rendered frames.
+      if (['feed', 'siphon', 'refill'].includes(this.mode)) {
+        this.carePointer = { clientX: e.clientX, clientY: e.clientY };
+      }
       if (this.mode.startsWith('plant:')) {
         this.rayFromEvent(e);
         const h = _ray.intersectObject(this.substrate.sand, false)[0];
@@ -1032,11 +1035,23 @@ export class Game {
         } else this.ghost.visible = false;
       }
     });
+    const stopCare = () => {
+      this.carePointer = null;
+      this.feeder.pouring = false;
+      this.siphonFlow = false;
+      this.jug.pouring = false;
+      wiping = false;
+      this.wiping = false;
+      down = null;
+    };
+    this.canvas.addEventListener('pointercancel', stopCare);
+    window.addEventListener('blur', stopCare);
     window.addEventListener('pointerup', (e) => {
       if (wiping) { wiping = false; this.wiping = false; this.canvas.style.cursor = 'grab'; }
       this.feeder.pouring = false;
       this.siphonFlow = false;
       this.jug.pouring = false;
+      if (this.controls.touchGesture.multiple && e.pointerType === 'touch') { down = null; return; }
       if (!down || e.target !== this.canvas) { down = null; return; }
       const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y);
       down = null;
@@ -1108,6 +1123,13 @@ export class Game {
   update(dt) {
     if (!(dt > 0) || !Number.isFinite(dt)) return;
     dt = Math.min(dt, 0.05);
+    if (this.carePointer) {
+      const pointer = this.carePointer;
+      this.carePointer = null;
+      if (this.mode === 'feed') this.feederAt(pointer);
+      if (this.mode === 'siphon') this.siphonAt(pointer);
+      if (this.mode === 'refill') this.jugAt(pointer);
+    }
     this.time += dt;
     WU.uTime.value = this.time;
     const dtMin = dt * GAME_MIN_PER_SEC * this.speed;
@@ -1141,6 +1163,7 @@ export class Game {
     const bdt = dt * Math.min(this.speed, 3);
     WU.uFlow.value = this.state.airstone ? 0.7 : 0.25;
     const world = {
+      time: this.time,
       fish: this.creatures,
       food: this.food,
       obstacles: this.allObstacles(),
@@ -1170,6 +1193,21 @@ export class Game {
         wake.set(c.pos.x, c.pos.y, c.pos.z, Math.max(1.2, c.total * 0.65));
         velocity.lerp(c.vel, 1 - Math.exp(-bdt * 8));
       } else { wake.set(0, -100, 0, 0); velocity.set(0, 0, 0); }
+    }
+    // Short lived vortices remain where a tail passed, then relax instead of
+    // pulling the leaves along with the fish. Cycle through all moving animals.
+    this.trailClock = (this.trailClock ?? 0) + bdt;
+    for (const velocity of WU.uTrailVelocity.value) velocity.multiplyScalar(Math.exp(-bdt * 3.2));
+    if (this.trailClock >= 0.1 && this.creatures.length) {
+      this.trailClock %= 0.1;
+      this.trailSource = (this.trailSource ?? 0) % this.creatures.length;
+      const c = this.creatures[this.trailSource++];
+      if (c.vel && c.vel.lengthSq() > 0.1) {
+        const slot = this.trailSlot = ((this.trailSlot ?? -1) + 1) % 8;
+        const r = Math.max(1.2, c.total * 0.55);
+        WU.uWakeTrail.value[slot].set(c.pos.x - c.fwd.x * r, c.pos.y, c.pos.z - c.fwd.z * r, r);
+        WU.uTrailVelocity.value[slot].copy(c.vel).multiplyScalar(0.7);
+      }
     }
     this.nest.update(bdt, world.flow);
     this.updateFood(bdt, dtMin);
@@ -1220,9 +1258,12 @@ export class Game {
       const motion = Math.min(1, c.vel.length() / 8);
       if (coupling * motion > 0.015) {
         const r = Math.max(0.35, (c.total ?? 3) * 0.16);
-        const strength = 0.04 * coupling * motion;
+        const beat = Math.sin(c.u?.uPhase?.value ?? this.time * 5);
+        const strength = 0.04 * coupling * motion * (0.7 + 0.3 * beat * beat);
+        const tailSide = beat * r * 0.35;
         this.waterSim.drop(c.pos.x, c.pos.z, r, -strength);
-        this.waterSim.drop(c.pos.x - c.fwd.x * r * 1.5, c.pos.z - c.fwd.z * r * 1.5, r, strength * 0.7);
+        this.waterSim.drop(c.pos.x - c.fwd.x * r * 1.5 + c.fwd.z * tailSide,
+          c.pos.z - c.fwd.z * r * 1.5 - c.fwd.x * tailSide, r, strength);
         c.wakeTimer = 0.12;
       }
     }
@@ -1236,10 +1277,9 @@ export class Game {
       this.algaeDirty = false;
     }
 
+    // Preserve manual pinch/pan focus unless animal tracking is explicitly enabled.
     if (this.follow && this.selected) {
       this.controls.target.lerp(this.selected.pos, 0.06);
-    } else if (!this.photo) {
-      this.controls.target.lerp(new THREE.Vector3(0, TANK.h * 0.42, 0), 0.02);
     }
     if (this.photo) {
       const center = this.selected ? this.selected.pos : this.controls.target;
@@ -1250,6 +1290,7 @@ export class Game {
   }
 
   renderFrame() {
+    this.camera.updateMatrixWorld();
     this.reflection.update(this.camera);
     this.updateMirrors();
     this.fx.render(this.time);
@@ -1266,10 +1307,10 @@ export class Game {
       : [[new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, -HALF_D - g)], [new THREE.Vector3(0, 0, -1), new THREE.Vector3(0, 0, HALF_D + g)]];
     this.mirrorFrame++;
     planes.forEach(([n, p], i) => {
-      // Telefonda iki ayna sırayla güncellenir
+      // Refresh one side reflection per frame; initialize both before alternating.
       const cam = c.clone().sub(p).dot(n) > 0;
       MIRROR_U['uMirOn' + i].value = cam ? 1 : 0;
-      if (!cam || (MOBILE && this.mirrorFrame % 2 !== i)) return;
+      if (!cam || (this.mirrorFrame > 1 && !this.photo && this.mirrorFrame % 2 !== i)) return;
       const m = this.mirrors[i];
       m.update(this.camera, n, p);
       MIRROR_U['uMirMat' + i].value.copy(m.textureMatrix);

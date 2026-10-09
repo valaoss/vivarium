@@ -390,10 +390,10 @@ export function createHUD(game, root, sound) {
   return {
     update(dt) {
       obs.update(dt);
-      syncWater();
       acc += dt;
       if (acc < 0.2) return;
       acc = 0;
+      syncWater();
       const s = game.state;
       const hh = Math.floor(game.hour), mm = Math.floor((game.hour % 1) * 60);
       top.querySelector('.day').textContent = `Gün ${game.day}`;
