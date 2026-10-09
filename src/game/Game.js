@@ -1350,22 +1350,9 @@ export class Game {
 
   renderFrame() {
     this.camera.updateMatrixWorld();
-    const q = this.quality ?? 3, k = this.renderTick = (this.renderTick ?? 0) + 1;
-    // düşük kalitede gölge haritası ve su yansıması iki karede bir yenilenir
-    const r = this.renderer;
-    if (q < 2) r.shadowMap.needsUpdate = k % 2 === 0;
-    r.shadowMap.autoUpdate = q >= 2;
-    if (q >= 2 || k % 2 === 1 || this.photo) this.reflection.update(this.camera);
-    if (q >= 3 || this.photo) this.updateMirrors();
+    this.reflection.update(this.camera);
+    this.updateMirrors();
     this.fx.render(this.time);
-  }
-
-  // Kare süresi en düşük çözünürlükte de yetmezse kalite basamak basamak iner, geri çıkmaz (gidip gelme olmaz)
-  degradeQuality() {
-    const q = this.quality = (this.quality ?? 3) - 1;
-    if (q === 2) { MIRROR_U.uMirOn0.value = 0; MIRROR_U.uMirOn1.value = 0; }
-    if (q === 0) this.fx.bloom.enabled = false;
-    return q > 0;
   }
 
   updateMirrors() {
@@ -1382,8 +1369,7 @@ export class Game {
       // Refresh one side reflection per frame; initialize both before alternating.
       const cam = c.clone().sub(p).dot(n) > 0;
       MIRROR_U['uMirOn' + i].value = cam ? 1 : 0;
-      // her cam üç karede bir yenilenir; kalan karede ayna çizilmez
-      if (!cam || (this.mirrorFrame > 2 && !this.photo && this.mirrorFrame % 3 !== i)) return;
+      if (!cam || (this.mirrorFrame > 1 && !this.photo && this.mirrorFrame % 2 !== i)) return;
       const m = this.mirrors[i];
       m.update(this.camera, n, p);
       MIRROR_U['uMirMat' + i].value.copy(m.textureMatrix);
