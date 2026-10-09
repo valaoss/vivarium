@@ -29,6 +29,7 @@ const _ray = new THREE.Raycaster();
 const _ndc = new THREE.Vector2();
 const _plane = new THREE.Plane();
 const _hit = new THREE.Vector3();
+const DAYS_PER_YEAR = 30;     // oyun ölçeği: türün bir yıllık ömrü 30 oyun günü
 
 export class Game {
   constructor(canvas) {
@@ -385,6 +386,13 @@ export class Game {
     const h = dtMin / 60;
     for (const c of this.creatures) {
       const d = c.data;
+      // yaşlanma: tür ömrünün son çeyreğinde balık yavaşlar, rengi solar, daha çok dinlenir
+      const life = c.prof?.life;
+      if (life) {
+        d.ageDays ??= d.fry ? 0 : life * DAYS_PER_YEAR * (0.15 + Math.random() * 0.3);
+        d.ageDays += dtMin / 1440;
+        c.elder = d.ageDays > life * DAYS_PER_YEAR * 0.75;
+      }
       // Büyüme: tok ve sağlıklıyken yavaş, boy yetişkine yaklaştıkça daha da yavaşlar (birkaç oyun günü)
       if (d.adultSize && !d.fry && d.size < d.adultSize - 0.002) {
         const fed = d.hunger < 60 ? 1 : d.hunger < 80 ? 0.35 : 0;
@@ -399,6 +407,7 @@ export class Game {
         }
       }
     }
+    this.updateEggs(h);
     if (this.creatures.length >= TANK.cap) return;
     for (const mother of [...this.creatures]) {
       const sp = mother.sp, d = mother.data;
@@ -416,6 +425,39 @@ export class Game {
       this.state.counters.births = (this.state.counters.births ?? 0) + 1;
       this.toast(`${d.name} (${sp.name}) ${n} yavru doğurdu! Yavrular bitkiler arasında saklanacak.`, 'good');
       this.discover('birth', `${sp.name} doğuran bir türdür; yumurta yerine canlı yavru dünyaya getirir.`);
+    }
+  }
+
+  // Yumurta saçan türler (tetra, rasbora, barb, danio, kory): sabah ışıkları yanınca dişi bitkilerin arasına
+  // yumurta bırakır; yetişkinler çoğunu yer. ~1,5 gün sonra çıkan yavrudan sağ kalan, bitki sıklığına bağlıdır.
+  updateEggs(h) {
+    const s = this.state;
+    s.eggs ??= [];
+    const hour = this.hour;
+    for (const mother of this.creatures) {
+      const d = mother.data, P = mother.prof;
+      if (!P?.eggs || mother.sp.livebearer || d.sex !== 'f' || d.fry || d.health < 70 || d.hunger > 60 || mother.elder) continue;
+      if (hour < 7 || hour > 10.5 || s.eggs.some((e) => e.species === mother.species)) continue;
+      if (Math.random() > 0.05 * h) continue;
+      if (!this.creatures.some((o) => o.species === mother.species && o.data.sex === 'm' && !o.data.fry)) continue;
+      s.eggs.push({ species: mother.species, n: 20 + Math.floor(Math.random() * 40), at: [mother.pos.x, mother.pos.z], hatch: s.minutes + 36 * 60, mother: d.name });
+      this.toast(`${d.name} (${mother.sp.name}) bitkilerin arasına yumurta bıraktı. Yetişkinler çoğunu yiyecek; sık bitki yavruları korur.`, 'good');
+      this.discover('eggs', `${mother.sp.name} yumurta saçan bir türdür; ebeveynler yumurtaya bakmaz, hatta yer.`);
+    }
+    for (const e of [...s.eggs]) {
+      if (s.minutes < e.hatch) continue;
+      s.eggs.splice(s.eggs.indexOf(e), 1);
+      const cover = Math.min(1, this.plants.plants.length / 14);
+      let n = 0;
+      for (let i = 0; i < e.n; i++) if (Math.random() < 0.006 + cover * 0.07) n++;
+      n = Math.min(n, 4, TANK.cap - this.creatures.length);
+      for (let i = 0; i < n; i++) {
+        const fry = this.spawn(e.species, { pos: [e.at[0] + (Math.random() - 0.5) * 3, sandHeight(e.at[0], e.at[1]) + 3, e.at[1] + (Math.random() - 0.5) * 3] });
+        Object.assign(fry.data, { size: 0.3, adultSize: 0.85 + Math.random() * 0.25, fry: true, trait: 'Çekingen', hunger: 20, stress: 20, ageDays: 0 });
+      }
+      const sp = SPECIES[e.species];
+      if (n > 0) this.toast(`${e.mother} adlı ${sp.name.toLowerCase()} balığının yumurtalarından ${n} yavru çıktı!`, 'good');
+      else this.toast(`${sp.name} yumurtalarının hepsi yendi. Daha sık bitki dikersen yavrular saklanabilir.`, 'warn');
     }
   }
 

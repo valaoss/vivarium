@@ -7,26 +7,27 @@ import { sandHeight } from '../world/substrate.js';
 // Her tür yalnızca biyolojisine uyan eylemleri alır (profile bayrakları); puanlar balığın kendi
 // ihtiyaçları, algıladıkları ve hafızasıyla hesaplanır. Ayrıntılar: docs/species/aquarium-fish.md
 //
+// life:   ortalama ömür (yıl); eggs: yumurta saçar (ebeveyn bakımı yok)
 // night:  gece duruşu — 'hover' (orta suda asılı, renk solar), 'bottom' (tabana çöker), 'leaf' (yüzeye yakın
 //         yaprakta yaslanır), 'glass' (cama / yaprağa yapışır), 'active' (gece etkin)
 // air:    'labyrinth' (labirent organı: düzenli yüzey nefesi, zorunlu), 'gut' (bağırsak solunumu: ara sıra
 //         yüzeye fırlama), yoksa yalnızca oksijen düşünce yüzeyde soluma (ASR)
 export const FISH_PROFILES = {
-  neon: { shoal: 0.85, night: 'hover', fade: 1, timid: 0.7 },
-  cardinal: { shoal: 0.9, night: 'hover', fade: 1, timid: 0.7 },
-  rasbora: { shoal: 0.95, night: 'hover', timid: 0.55 },
-  barb: { shoal: 0.55, night: 'hover', court: 'display', timid: 0.5 },
-  danio: { shoal: 0.7, night: 'hover', dawnChase: true, timid: 0.3, restless: 1 },
-  guppy: { shoal: 0.25, night: 'hover', court: 'sigmoid', grazer: 0.2, timid: 0.3 },
-  platy: { shoal: 0.2, night: 'bottomish', court: 'chase', grazer: 0.5, timid: 0.35 },
-  molly: { shoal: 0.2, night: 'bottomish', court: 'chase', grazer: 0.8, timid: 0.35 },
-  swordtail: { shoal: 0.2, night: 'hover', court: 'chase', spar: true, timid: 0.3 },
-  betta: { shoal: 0, night: 'leaf', air: 'labyrinth', territorial: true, mirror: true, nest: true, timid: 0.15 },
-  gourami: { shoal: 0, night: 'leaf', air: 'labyrinth', nest: true, feelers: true, timid: 0.6 },
-  angel: { shoal: 0.2, night: 'hover', predator: { prey: ['neon', 'cardinal', 'shrimp', 'amano'], ratio: 0.45 }, hierarchy: true, timid: 0.25 },
-  cory: { shoal: 0.75, night: 'bottom', air: 'gut', bottomFeeder: true, timid: 0.45 },
-  kuhli: { shoal: 0.35, night: 'active', hideDay: true, bottomFeeder: true, timid: 0.9 },
-  oto: { shoal: 0.5, night: 'glass', grazer: 1, timid: 0.6 },
+  neon: { life: 6, eggs: true, shoal: 0.85, night: 'hover', fade: 1, timid: 0.7 },
+  cardinal: { life: 5, eggs: true, shoal: 0.9, night: 'hover', fade: 1, timid: 0.7 },
+  rasbora: { life: 6, eggs: true, shoal: 0.95, night: 'hover', timid: 0.55 },
+  barb: { life: 6, eggs: true, shoal: 0.55, night: 'hover', court: 'display', timid: 0.5 },
+  danio: { life: 4, eggs: true, shoal: 0.7, night: 'hover', dawnChase: true, timid: 0.3, restless: 1 },
+  guppy: { life: 2, shoal: 0.25, night: 'hover', court: 'sigmoid', grazer: 0.2, timid: 0.3 },
+  platy: { life: 3, shoal: 0.2, night: 'bottomish', court: 'chase', grazer: 0.5, timid: 0.35 },
+  molly: { life: 4, shoal: 0.2, night: 'bottomish', court: 'chase', grazer: 0.8, timid: 0.35 },
+  swordtail: { life: 4, shoal: 0.2, night: 'hover', court: 'chase', spar: true, timid: 0.3 },
+  betta: { life: 3, shoal: 0, night: 'leaf', air: 'labyrinth', territorial: true, mirror: true, nest: true, timid: 0.15 },
+  gourami: { life: 5, shoal: 0, night: 'leaf', air: 'labyrinth', nest: true, feelers: true, timid: 0.6 },
+  angel: { life: 10, shoal: 0.2, night: 'hover', predator: { prey: ['neon', 'cardinal', 'shrimp', 'amano'], ratio: 0.45 }, hierarchy: true, timid: 0.25 },
+  cory: { life: 8, eggs: true, shoal: 0.75, night: 'bottom', air: 'gut', bottomFeeder: true, timid: 0.45 },
+  kuhli: { life: 10, shoal: 0.35, night: 'active', hideDay: true, bottomFeeder: true, timid: 0.9 },
+  oto: { life: 4, shoal: 0.5, night: 'glass', grazer: 1, timid: 0.6 },
 };
 
 const _v = new THREE.Vector3(), _w = new THREE.Vector3();

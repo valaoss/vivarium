@@ -10,6 +10,7 @@ import { waterCurrent } from '../render/water.js';
 import { Agent } from '../eco/Agent.js';
 import { Brain } from '../eco/Brain.js';
 import { FISH_ACTIONS, FISH_PROFILES, zonePoint } from './fishBrain.js';
+import { SwimDrive, Drift, heavyTail, steerRate } from '../eco/locomotion.js';
 
 const GEO_CACHE = {};
 const BETTA_PALETTES = [
@@ -22,6 +23,9 @@ const GUPPY_PALETTES = [
 const _wc = new THREE.Vector3(), _ax = new THREE.Vector3();
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _m = new THREE.Matrix4(), _up = new THREE.Vector3(0, 1, 0);
 const _x = new THREE.Vector3(), _y = new THREE.Vector3(), _q = new THREE.Quaternion(), _mw = new THREE.Vector3(), _fd = new THREE.Vector3();
+const _b1 = new THREE.Vector3(), _b2 = new THREE.Vector3(), _b3 = new THREE.Vector3();
+// hassas konumlanma gereken durumlarda (yem, hava, yosun, eşeleme) doğrudan hız denetimi; geri kalanında itki fiziği
+const PRECISE = new Set(['seek', 'eat', 'air', 'graze', 'root']);
 
 // Yüzme tarzı: burst = kuyruk vuruşu + süzülme (danio, tetra), steady = sürekli,
 // hover = yavaş, yerinde asılı kalabilen (beta, melek), eel = yılan gibi (kuhli), hop = tabanda zıplayıp durma
@@ -109,12 +113,22 @@ export class Fish extends Agent {
     this.feed = null;
     this.gait = GAIT[data.species] ?? 'steady';
     this.u.uEel.value = this.gait === 'eel' ? 1 : 0;
-    this.beat = 0;
-    this.coast = Math.random();
     this.thrust = 1;
     this.cstart = 0;
     this.cside = 1;
     this.wasFleeing = false;
+    // itki ile yüzme ve bireysel tempo: her balık kendi hızında, yönü ve hızı yavaşça kayar, arada durur
+    this.drive = new SwimDrive({ cruise: this.sp.cruise, burst: this.sp.burst, gait: { hop: 'burst', eel: 'steady' }[this.gait] ?? this.gait, rand: this.rand, glideTau: this.gait === 'hop' ? 0.35 : 0.9 });
+    this.slip = new THREE.Vector3();
+    this.turnW = 0;
+    this.pers = { pace: 0.85 + this.rand() * 0.3, wander: 0.6 + this.rand() * 0.8, pauser: { hover: 0.55, steady: 0.3, burst: 0.12 }[this.gait] ?? 0.2 };
+    this.paceDrift = new Drift(this.rand, 4, 1);
+    this.yawDrift = new Drift(this.rand, 2.5, 1);
+    this.pitchDrift = new Drift(this.rand, 3, 1);
+    this.pauseT = heavyTail(this.rand, 3, 40);
+    this.paused = false;
+    this.relay = null;
+    this.fleeAge = 9;
 
     const p = data.pos ?? [0, TANK.water * 0.6, 0];
     this.pos = new THREE.Vector3(...p);
@@ -176,6 +190,14 @@ export class Fish extends Agent {
       if (seen(o.pos, Math.min(R, 18))) mates.push(o);
     }
     this.mates = mates;
+    // ürkme dalgası: yeni kaçmaya başlayan bir sürü arkadaşını görünce kısa bir tepki gecikmesiyle o da kaçar
+    if (!(this.flee > 0) && !this.relay) {
+      for (const m of mates) {
+        if (!(m.flee > 0) || m.fleeAge > 0.4 || (m.scareLvl ?? 1) < 0.3) continue;
+        this.relay = { t: 0.06 + this.rand() * 0.22, from: m.pos.clone().addScaledVector(m.fleeDir, -4), lvl: (m.scareLvl ?? 1) * 0.75 };
+        break;
+      }
+    }
     let best = null, bd = Infinity, how = '';
     for (const f of w.food) {
       if (f.eaten || (f.held && f.held !== this)) continue;
@@ -256,7 +278,7 @@ export class Fish extends Agent {
     const o = super.inspect();
     const d = this.data;
     o.meta = [
-      `${d.sex === 'm' ? 'Erkek' : 'Dişi'} · ${(this.sp.body.length * (d.size ?? 1)).toFixed(1)} cm · ${d.trait} · görüş ${this.visR?.toFixed(0) ?? '?'} cm`,
+      `${d.sex === 'm' ? 'Erkek' : 'Dişi'} · ${(this.sp.body.length * (d.size ?? 1)).toFixed(1)} cm · ${d.trait} · ${d.ageDays !== undefined ? `${Math.floor(d.ageDays)} günlük${this.elder ? ' (yaşlı)' : d.fry ? ' (yavru)' : ''} · ` : ''}görüş ${this.visR?.toFixed(0) ?? '?'} cm`,
       `${this.mates.length} hemcinsini görüyor${this.prof.air ? ` · hava ihtiyacı %${Math.round(Math.min(1, this.airNeed) * 100)}` : ''}${this.nestSize ? ` · yuva %${Math.round(this.nestSize / 1.5 * 100)}` : ''} · yem beklentisi %${Math.round(this.feedExpectation() * 100)}`,
     ];
     o.bars = [['Tokluk', 100 - d.hunger, d.hunger > 70], ['Stres', d.stress, d.stress > 60], ['Sağlık', d.health, d.health < 50], ['Tedirginlik', this.alarm * 100, this.alarm > 0.5]];
@@ -310,6 +332,8 @@ export class Fish extends Agent {
     const P = this.prof;
     if (P.air) this.airNeed += dt / (P.air === 'gut' ? 100 : P.air === 'labyrinth' ? (this.species === 'betta' ? 26 : 38) : 60) * (world.o2 < 40 ? 2 : 1);
     if (this.flee > 0) this.flee -= dt;
+    this.fleeAge += dt;
+    if (this.relay && (this.relay.t -= dt) <= 0) { const r = this.relay; this.relay = null; this.scare(r.from, r.lvl, 'sürü arkadaşı ürktü'); }
     // algı + karar: her karede değil, kısa aralıklarla (her balık kendi ritminde)
     this.thinkAcc = (this.thinkAcc ?? Math.random() * this.thinkInterval) + dt;
     if (this.thinkAcc >= this.thinkInterval) { this.sense(this.thinkAcc); this.decayPercepts(this.thinkAcc); this.brain.decide(this); this.thinkAcc = 0; }
@@ -523,43 +547,44 @@ export class Fish extends Agent {
       maxTurn = 22;
     }
 
-    // --- Yürüyüş ritmi ---
+    // --- Doğal değişkenlik: tempo ve yön yavaşça kayar; sakin yüzüşte arada duraklar (ağır kuyruklu süreler)
     const calm = !fleeing && !['sleep', 'rest', 'seek', 'eat', 'hunt', 'chase', 'court', 'graze', 'root', 'wait', 'air'].includes(state);
-    this.thrust = 1;
-    if (calm && (this.gait === 'burst' || this.gait === 'hop')) {
-      if (this.coast > 0) {
-        this.coast -= dt;
-        this.thrust = 0;
-        if (this.coast <= 0) this.beat = this.gait === 'hop' ? 0.18 + Math.random() * 0.2 : 0.15 + Math.random() * 0.25;
-      } else {
-        this.beat -= dt;
-        if (this.beat <= 0) {
-          const need = Math.min(1, speed / sp.burst);
-          this.coast = this.gait === 'hop' ? 0.8 + Math.random() * 2.5 : (0.25 + Math.random() * 0.7) * (1 - need * 0.6);
-        }
+    speed *= this.pers.pace * (this.elder ? 0.82 : 1) * (1 + this.paceDrift.step(dt) * 0.18);
+    const wob = this.yawDrift.step(dt) * this.pers.wander * (calm ? 0.35 : 0.06);
+    const pob = this.pitchDrift.step(dt) * (calm && !sp.bottom ? 0.12 : 0);
+    if (calm && !sp.bottom) {
+      this.pauseT -= dt;
+      if (this.pauseT <= 0) {
+        this.paused = !this.paused && this.rand() < this.pers.pauser;
+        this.pauseT = this.paused ? heavyTail(this.rand, 0.6, 12, 1.4) : heavyTail(this.rand, 4, 60);
       }
-      speed *= this.thrust ? 1.6 : 0;
-    } else if (calm && this.gait === 'hover') {
-      speed *= 0.75 + 0.25 * Math.sin(this.gaitT = (this.gaitT ?? Math.random() * 9) + dt * 0.7);
-    }
+      if (this.paused) speed *= 0.06;
+    } else this.paused = false;
 
     // --- Hız ve yön ---
-    if (acc.lengthSq() > 1e-6) acc.normalize();
-    const desired = _v2.copy(acc).multiplyScalar(speed);
-    let accel = state === 'flee' ? 60 : state === 'seek' ? 25 : 8;
-    if (!this.thrust) accel = 5;                         // süzülme: su direnciyle yavaşlar
-    else if (this.gait === 'burst' && calm) accel = 30;  // kısa ve sert kuyruk vuruşu
-    const dv = desired.sub(this.vel);
-    const dvl = dv.length();
-    if (dvl > accel * dt) dv.multiplyScalar((accel * dt) / dvl);
-    this.vel.add(dv);
-
-    const spd = this.vel.length();
     const face = !!this.faceDir;
-    if (spd > 0.4 || face) {
-      // nişan alırken burun hıza değil yeme döner
-      const dir = face ? _x.copy(this.faceDir) : _x.copy(this.vel).divideScalar(spd);
-      // eğim sınırla
+    const precise = face || PRECISE.has(state);
+    if (acc.lengthSq() > 1e-6) acc.normalize();
+    if (wob) { const c = Math.cos(wob), sn = Math.sin(wob), ax = acc.x * c + acc.z * sn; acc.z = -acc.x * sn + acc.z * c; acc.x = ax; }
+    acc.y += pob;
+    if (precise) {
+      const desired = _v2.copy(acc).multiplyScalar(speed);
+      const accel = state === 'seek' ? 25 : 8;
+      const dv = desired.sub(this.vel);
+      const dvl = dv.length();
+      if (dvl > accel * dt) dv.multiplyScalar((accel * dt) / dvl);
+      this.vel.add(dv);
+    }
+
+    // dışarıdan itilme (dekor, cam) kısa sürede söner ve birikemez
+    this.slip.multiplyScalar(Math.exp(-dt * 5));
+    if (this.slip.lengthSq() > 9) this.slip.setLength(3);
+    let spd = this.vel.length();
+    const steer = face || (precise ? spd > 0.4 : acc.lengthSq() > 1e-6 && speed > 0.04);
+    let dyawAbs = 0;
+    if (steer) {
+      // nişan alırken burun hıza değil yeme döner; itki kipinde gövde istenen yöne döner, hız gövdeyi izler
+      const dir = face ? _x.copy(this.faceDir) : precise ? _x.copy(this.vel).divideScalar(spd) : _x.copy(acc);
       const high = pos.y > sandHeight(pos.x, pos.z) + 3;
       const maxPitch = face ? 1.1 : sp.bottom && state !== 'air' && !high ? 0.25 : 0.6;
       // eğim sınırı: yön yatay bileşenini korur (dikey hızda bile balık dik durmaz, ekseni etrafında savrulmaz)
@@ -567,19 +592,23 @@ export class Fish extends Agent {
       const py = THREE.MathUtils.clamp(dir.y, -Math.min(maxPitch, 0.82), Math.min(maxPitch, 0.82));
       let hx = dir.x, hz = dir.z, hl = Math.hypot(hx, hz);
       if (hl < 0.25) {
-        // hız neredeyse dikey: son yatay yönü koru
         const fl = Math.hypot(this.fwd.x, this.fwd.z);
         if (fl > 0.2) { hx = this.fwd.x; hz = this.fwd.z; hl = fl; } else { hx = Math.sin(this.lastYaw ?? 0); hz = Math.cos(this.lastYaw ?? 0); hl = 1; }
       }
       const hk = Math.sqrt(1 - py * py) / hl;
       dir.set(hx * hk, py, hz * hk);
-      // balık gibi dön: yatay dönüş (yaw) ve burun eğimi (pitch) ayrı ayrı ve sınırlı hızla
       const fl = Math.hypot(this.fwd.x, this.fwd.z);
       let yaw = fl > 0.3 ? Math.atan2(this.fwd.x, this.fwd.z) : (this.lastYaw ?? Math.atan2(dir.x, dir.z));
       let pitch = Math.asin(THREE.MathUtils.clamp(this.fwd.y, -1, 1));
       let dyaw = Math.atan2(dir.x, dir.z) - yaw;
       dyaw = Math.atan2(Math.sin(dyaw), Math.cos(dyaw));
-      const stepYaw = THREE.MathUtils.clamp(dyaw, -maxTurn * dt, maxTurn * dt);
+      dyawAbs = Math.abs(dyaw);
+      // dönüş eylemsizlikli: açısal hız ivmelenir; yavaşken (yalnız göğüs yüzgeçleriyle) daha ağır döner
+      const auth = precise || this.gait === 'hover' ? 1 : 0.4 + 0.6 * Math.min(1, this.drive.u / Math.max(0.5, sp.cruise));
+      const alpha = this.cstart > 0 || fleeing ? 400 : precise ? maxTurn * 12 : maxTurn * 4;
+      this.turnW = steerRate(dyaw, this.turnW, maxTurn * auth, alpha, dt);
+      let stepYaw = this.turnW * dt;
+      if (Math.sign(stepYaw) === Math.sign(dyaw) && Math.abs(stepYaw) > dyawAbs) { stepYaw = dyaw; this.turnW *= 0.5; }
       yaw += stepYaw;
       pitch += THREE.MathUtils.clamp(Math.asin(py) - pitch, -maxTurn * 0.5 * dt, maxTurn * 0.5 * dt);
       pitch = THREE.MathUtils.clamp(pitch, -0.96, 0.96);
@@ -587,18 +616,29 @@ export class Fish extends Agent {
       this.lastYaw = yaw;
       this.yawRate = THREE.MathUtils.lerp(this.yawRate, stepYaw / Math.max(dt, 1e-4), 1 - Math.exp(-dt * 13.4));
     } else {
+      this.turnW *= Math.exp(-dt * 6);
       this.yawRate *= Math.exp(-dt * 6.3);
       // dururken yatay pozisyona dön
       this.fwd.y *= Math.exp(-dt * 3.1); this.fwd.normalize();
     }
 
-    // Body heading limits lateral acceleration: a cruising fish cannot slide
-    // sideways while its nose is still completing a turn.
-    if (!face && spd > 0.4) {
-      const horizontal = Math.hypot(this.vel.x, this.vel.z);
-      const forward = Math.max(1e-4, Math.hypot(this.fwd.x, this.fwd.z));
-      this.vel.x = this.fwd.x / forward * horizontal;
-      this.vel.z = this.fwd.z / forward * horizontal;
+    if (precise) {
+      // gövde yönü yanal kaymayı sınırlar: dönüşünü bitirmemiş balık yan kaymaz
+      if (!face && spd > 0.4) {
+        const horizontal = Math.hypot(this.vel.x, this.vel.z);
+        const forward = Math.max(1e-4, Math.hypot(this.fwd.x, this.fwd.z));
+        this.vel.x = this.fwd.x / forward * horizontal;
+        this.vel.z = this.fwd.z / forward * horizontal;
+      }
+      this.drive.u = Math.max(0, this.vel.dot(this.fwd));
+      this.drive.thrust += (Math.min(1, spd / Math.max(1, sp.cruise * 2)) - this.drive.thrust) * Math.min(1, dt * 8);
+      this.thrust = 1;
+    } else {
+      // itki fiziği: kuyruk vuruşu ileri iter, su direnci yavaşlatır; keskin dönüş bir vuruşu tetikler ve frenler
+      const u = this.drive.step(dt, speed, { urgent: fleeing && this.cstart <= 0, kick: dyawAbs > 0.8, turnLoss: Math.abs(this.turnW) * 0.25 });
+      this.vel.copy(this.fwd).multiplyScalar(u).add(this.slip);
+      this.thrust = this.drive.gliding ? 0 : 1;
+      spd = this.vel.length();
     }
     pos.addScaledVector(this.vel, dt);
     // Fin control resists drift while hovering; coasting bodies follow the same
@@ -616,10 +656,10 @@ export class Fish extends Agent {
     // --- Animasyon parametreleri ---
     const k = Math.min(spd / sp.burst, 1);
     const eel = this.gait === 'eel';
-    let freq = (eel ? 3 : 5) + spd * (eel ? 0.9 : 1.5) + (state === 'flee' ? 10 : 0);
-    let amp = 0.035 + k * 0.13 + (spd < 0.8 ? 0.01 : 0);
-    if (!this.thrust) { amp = 0.008; freq *= 0.4; }                  // süzülürken gövde düz
-    else if (this.gait === 'burst' && calm) { amp += 0.06; freq += 6; }
+    // kuyruk vuruşu itkiden gelir: vuruşta sık ve geniş, süzülmede gövde düz
+    const th = this.drive.thrust;
+    let freq = (eel ? 2.5 : 4) + th * (eel ? 6 : 14) + k * 4;
+    let amp = 0.012 + th * 0.15 + k * 0.03;
     if (this.gait === 'hover' && spd < 1.5) amp *= 0.5;             // yerinde asılı: yalnız yüzgeçler
     if (state === 'sleep' || state === 'rest') { amp *= 0.12; freq *= 0.3; }
     this.u.uPhase.value += dt * freq;
@@ -631,7 +671,7 @@ export class Fish extends Agent {
     this.u.uBend.value = this.bend;
     const asleep = state === 'sleep' || state === 'rest';
     const displaying = state === 'flare' || state === 'court';
-    const finSpread = displaying ? 1.15 : asleep ? 0.35 : this.thrust ? 0.85 : 0.55;
+    const finSpread = displaying ? 1.15 : asleep ? 0.35 : this.paused ? 0.95 : this.thrust ? 0.85 : 0.55;
     const finActivity = asleep ? 0.07 : spd < 1.5 ? 0.65 : 0.3;
     this.u.uFinSpread.value += (finSpread - this.u.uFinSpread.value) * (1 - Math.exp(-dt * 4));
     this.u.uFinActivity.value += (finActivity - this.u.uFinActivity.value) * (1 - Math.exp(-dt * 6));
@@ -647,7 +687,7 @@ export class Fish extends Agent {
     this.u.uMouth.value = this.mouthOpen;
     this.gill += (Math.max(this.gillTarget ?? 0, (0.5 + 0.5 * Math.sin(this.breath - 0.8)) * (asleep ? 0.12 : 0.35)) - this.gill) * Math.min(1, dt * 12);
     this.u.uGill.value = this.gill;
-    this.u.uPale.value = THREE.MathUtils.lerp(this.u.uPale.value, Math.max((100 - d.health) / 100, d.stress / 160), 0.05);
+    this.u.uPale.value = THREE.MathUtils.lerp(this.u.uPale.value, Math.max((100 - d.health) / 100, d.stress / 160, this.elder ? 0.18 : 0), 0.05);
 
     // Dönüşüm
     _y.copy(_up);
@@ -705,7 +745,7 @@ export class Fish extends Agent {
     const pl = Math.hypot(px, pz), maxStep = dt * 5;
     if (pl > maxStep) { px *= maxStep / pl; pz *= maxStep / pl; }
     pos.x += px; pos.z += pz;
-    if (pl > 0.01) this.vel.x += px * 2, this.vel.z += pz * 2;        // itilen balık yönünü de oraya çevirir
+    if (pl > 0.01) { this.vel.x += px * 2; this.vel.z += pz * 2; this.slip.x += px * 2; this.slip.z += pz * 2; }   // itilen balık yönünü de oraya çevirir
     // cam ve su yüzeyi en son: dekordan itilme balığı camın dışına taşıyamaz
     pos.x = THREE.MathUtils.clamp(pos.x, -HALF_W + m - x0, HALF_W - m - x1);
     pos.z = THREE.MathUtils.clamp(pos.z, -HALF_D + m - z0, HALF_D - m - z1);
@@ -716,20 +756,31 @@ export class Fish extends Agent {
     g.position.copy(pos);
   }
 
+  // Sürü: mesafeye değil, görebildiği en yakın ~6 hemcinse uyum (topolojik komşuluk). Yakındakinden
+  // uzaklaş, komşuların gövde yönüne hizalan, yalnızca tercih edilen aralıktan uzaksa yanaş.
   boids(world, acc, w) {
     const pos = this.pos;
-    let n = 0;
-    const coh = new THREE.Vector3(), ali = new THREE.Vector3();
-    for (const o of world.fish) {
-      if (o === this || o.species !== this.species) continue;
-      const L = o.pos.distanceTo(pos);
-      if (L > 10) continue;
-      coh.add(o.pos); ali.add(o.vel); n++;
+    const near = this._near ??= [];
+    near.length = 0;
+    for (const o of this.mates) if (o.pos.distanceToSquared(pos) < 400) near.push(o);
+    if (!near.length) return;
+    near.sort((a, b) => a.pos.distanceToSquared(pos) - b.pos.distanceToSquared(pos));
+    if (near.length > 6) near.length = 6;
+    const coh = _b1.set(0, 0, 0), ali = _b2.set(0, 0, 0), sep = _b3.set(0, 0, 0);
+    for (const o of near) {
+      coh.add(o.pos);
+      ali.addScaledVector(o.fwd ?? o.vel, 1);
+      const dx = pos.x - o.pos.x, dy = pos.y - o.pos.y, dz = pos.z - o.pos.z, d = Math.hypot(dx, dy, dz);
+      const room = (this.total + (o.total ?? this.total)) * 0.55;
+      if (d < room && d > 1e-4) { const k = (room - d) / (room * d); sep.x += dx * k; sep.y += dy * k; sep.z += dz * k; }
     }
-    if (!n) return;
-    coh.divideScalar(n).sub(pos);
-    acc.addScaledVector(coh, 0.12 * w);
+    coh.divideScalar(near.length).sub(pos);
+    // tedirginken aralık daralır (sıkı sürü)
+    const pref = this.total * (1.6 - this.alarm * 0.7);
+    const cl = coh.length();
+    if (cl > pref) acc.addScaledVector(coh, 0.18 * w * (cl - pref) / cl);
     if (ali.lengthSq() > 0) acc.addScaledVector(ali.normalize(), 0.9 * w);
+    acc.addScaledVector(sep, 1.6 * w);
   }
 
   /** Ağız ucunun dünya konumu; `inset` ağız içine doğru (ağız boyu cinsinden) */
@@ -866,6 +917,8 @@ export class Fish extends Agent {
     this.alarm = Math.max(this.alarm ?? 0, Math.min(1, strength * (1 - d / 30) * 1.5));
     this.remember?.('danger', from, strength, 6);
     this.flee = 0.8 + Math.random() * 0.8;
+    this.fleeAge = 0;
+    this.scareLvl = strength;
     this.fleeDir.subVectors(this.pos, from).normalize();
     this.fleeDir.y += (Math.random() - 0.5) * 0.5;
     this.fleeDir.z -= 0.6; // camdan uzaklaş

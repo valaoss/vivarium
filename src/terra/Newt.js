@@ -4,6 +4,7 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 import { Agent, senseVision, senseVibration } from '../eco/Agent.js';
 import { SkinSurface } from '../eco/skinSurface.js';
 import { turnVelocity } from '../creatures/motion.js';
+import { heavyTail } from '../eco/locomotion.js';
 import { Brain } from '../eco/Brain.js';
 import { NEWT_ACTIONS } from './newtActions.js';
 import { twoBoneIK, dropToGround } from '../eco/ik.js';
@@ -145,6 +146,8 @@ export class Newt extends Agent {
     this.breathRate = 0.8 + this.rand() * 0.35;
     this.strokeTimer = 0;
     this.strokeActive = true;
+    this.boutWalk = true;          // karada kesik kesik ilerleme: yürüyüş nöbeti / duraklama
+    this.boutT = heavyTail(this.rand, 1.6, 9, 1.5);
     this.swimDrive = 1;
     this.pitch = 0;
     this.roll = 0;
@@ -328,7 +331,7 @@ export class Newt extends Agent {
     this.strokeTimer -= dt;
     if (this.strokeTimer <= 0) {
       this.strokeActive = !this.strokeActive;
-      this.strokeTimer = this.strokeActive ? 0.7 + this.rand() * 1.4 : 0.4 + this.rand() * 1.1;
+      this.strokeTimer = this.strokeActive ? heavyTail(this.rand, 0.6, 3, 1.8) : heavyTail(this.rand, 0.4, 4, 1.5);
     }
     const drive = this.state === 'strike' || this.state === 'flee' || this.state === 'air' || this.strokeActive ? 1 : 0.12;
     this.swimDrive += (drive - this.swimDrive) * (1 - Math.exp(-dt * 5));
@@ -511,7 +514,19 @@ export class Newt extends Agent {
     const st = this.state;
     const actQ = THREE.MathUtils.clamp(this.q, 0.4, 1.3) * (this.needs.health < 30 ? 0.5 : 1);
     let want = mv.speed * (st === 'strike' ? 1 : actQ);
-    if (this.inWater && st !== 'strike') want *= 0.65 + this.swimDrive * 0.35;
+    // karada kesik kesik ilerler: birkaç adım yürür, durup etrafı kollar (süreler ağır kuyruklu, kişiliğe bağlı)
+    const urgent = st === 'strike' || st === 'flee' || st === 'air' || this.threatLevel > 0.3;
+    if (!this.inWater && want > 0 && !urgent) {
+      this.boutT -= dt;
+      if (this.boutT <= 0) {
+        this.boutWalk = !this.boutWalk;
+        this.boutT = this.boutWalk
+          ? heavyTail(this.rand, 1.4, 9, 1.5) * (0.7 + this.traits.activity * 0.6)
+          : heavyTail(this.rand, 0.35, 5, 1.3) * (st === 'stalk' ? 1.6 : 1) * (1.3 - this.traits.activity * 0.6);
+        if (!this.boutWalk) this.look.timer = Math.min(this.look.timer, 0.15);
+      }
+      if (!this.boutWalk) want = 0;
+    } else if (urgent || this.inWater) { this.boutWalk = true; }
     let turnTo = this.heading;
     const goal = mv.to ?? mv.face;
     if (goal) { turnTo = Math.atan2(goal.x - this.pos.x, goal.z - this.pos.z); this.aim.copy(goal); }
@@ -541,7 +556,16 @@ export class Newt extends Agent {
     // yerinde dönerken de ayaklar adım atar: dönüş hızını yürüme hızına çevir (ayak kayması olmasın)
     this.yawRate = (this.heading - h0) / Math.max(dt, 1e-4);
     if (Math.abs(err) > 1.2 && st !== 'strike') want *= 0.25;   // önce yerinde dön
-    this.speed += (want - this.speed) * Math.min(1, dt * (st === 'strike' ? 20 : this.inWater ? 1.5 : 3));
+    if (this.inWater && st !== 'strike') {
+      // suda: kuyruk vuruşunda itki, aralarda süzülme (su direnciyle yavaşlar)
+      const sd = this.swimDrive;
+      this.speed += (want * 1.25 - this.speed) * Math.min(1, dt * 2.5 * sd);
+      this.speed *= Math.exp(-dt * 0.9 * (1 - sd));
+    } else {
+      // karada: kalkışta yavaş ivmelenir, durmada daha çabuk yavaşlar
+      const r = st === 'strike' ? 20 : want > this.speed ? 2.2 : 5;
+      this.speed += (want - this.speed) * Math.min(1, dt * r);
+    }
 
     const oldX = this.pos.x, oldZ = this.pos.z;
     this.pos.x += Math.sin(this.heading) * this.speed * dt;
@@ -554,6 +578,7 @@ export class Newt extends Agent {
     const ground = w.ground(this.pos.x, this.pos.z);
     if (this.swimBlend > 0.5) {
       let ty = THREE.MathUtils.clamp(ground + 1.5 + Math.sin(this.swimPhase * 0.13) * 0.6, ground + 0.4, w.waterY - 1.1);
+      ty -= (1 - this.swimDrive) * 0.7;
       if (mv.depth === 'surface') ty = w.waterY - 0.55;
       if (mv.depth === 'bottom') ty = ground + 0.05;
       this.vy += ((ty - this.pos.y) * 2 - this.vy) * Math.min(1, dt * 2);
@@ -673,7 +698,7 @@ export class Newt extends Agent {
     const swimAmp = sb * (st === 'rest' ? 0.008 : (0.18 + Math.min(this.speed, 5) * 0.09) * this.swimDrive);
 
     // gövde (omurga) — kara: tek kavis (C) salınımı; su: geriye ilerleyen dalga
-    const bend = 0.1 * moving * Math.cos(p2);   // önde olan ön ayağın tarafı dışbükey
+    const bend = (0.07 + 0.1 * Math.min(1, this.speed / 2.5)) * moving * Math.cos(p2);   // önde olan ön ayağın tarafı dışbükey
     let total = 0;
     const trunkAngles = TRUNK.map((_, i) => {
       if (i === 0) return 0;
@@ -683,7 +708,7 @@ export class Newt extends Agent {
       return a;
     });
     // gövde dönüşü (yön değiştirirken kıvrılma)
-    const turn = THREE.MathUtils.clamp(wrap(Math.atan2(this.aim.x - this.pos.x, this.aim.z - this.pos.z) - this.heading), -1, 1) * (this.speed > 0.2 ? 0.035 : 0.02);
+    const turn = THREE.MathUtils.clamp(wrap(Math.atan2(this.aim.x - this.pos.x, this.aim.z - this.pos.z) - this.heading), -1, 1) * (this.speed > 0.2 ? 0.08 : 0.045);
     // unken refleksi: gövde yukarı kavis, baş ve kuyruk kalkar; karın (turuncu) görünür hale gelir
     this.unkenW += ((st === 'unken' ? 1 : 0) - this.unkenW) * Math.min(1, dt * 2.5);
     const uk = smooth(this.unkenW);
@@ -702,7 +727,7 @@ export class Newt extends Agent {
     // kuyruk: karada sürüklenip hafifçe salınır, suda asıl itici
     TAIL.forEach((n, i) => {
       const t = (i + 1) / TAIL.length;
-      const land = moving * 0.06 * Math.sin(p2 - 1.2 - t * 2.2) + 0.003 * Math.sin(this.breath * 0.4 + t * 3) * lb;
+      const land = moving * (0.06 + 0.05 * Math.min(1, this.speed / 2.5)) * Math.sin(p2 - 1.2 - t * 2.2) + 0.003 * Math.sin(this.breath * 0.4 + t * 3) * lb;
       const water = swimAmp * (0.25 + t * 0.9) * Math.sin(this.swimPhase - 1.6 - t * 3.2) * 0.42;
       j[n].rot(UP, land + water - this.bendSmooth * 0.6);
       if (uk > 0.001) { j[n].rot(LAT, UNKEN * uk * (0.03 + t * 0.13)); j[n].rot(UP, uk * 0.08 * t * Math.sin(this.breath * 2.2 - t * 4)); }
