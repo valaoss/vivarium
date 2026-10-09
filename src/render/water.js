@@ -93,6 +93,12 @@ export function plantWaterMotion(shader, weight, floating = false) {
         transformed += vec3(dot(push, waterModel[0].xyz) / max(dot(waterModel[0].xyz, waterModel[0].xyz), 0.0001),
           dot(push, waterModel[1].xyz) / max(dot(waterModel[1].xyz, waterModel[1].xyz), 0.0001),
           dot(push, waterModel[2].xyz) / max(dot(waterModel[2].xyz, waterModel[2].xyz), 0.0001));
+        // salınım ve akıntıdan sonra bile yaprak camın içinden geçmez: cama dayanır
+        vec3 wq = (waterModel * vec4(transformed, 1.0)).xyz;
+        vec3 inside = vec3(clamp(wq.x, uBoxMin.x + 0.3, uBoxMax.x - 0.3), wq.y, clamp(wq.z, uBoxMin.z + 0.3, uBoxMax.z - 0.3)) - wq;
+        transformed += vec3(dot(inside, waterModel[0].xyz) / max(dot(waterModel[0].xyz, waterModel[0].xyz), 0.0001),
+          dot(inside, waterModel[1].xyz) / max(dot(waterModel[1].xyz, waterModel[1].xyz), 0.0001),
+          dot(inside, waterModel[2].xyz) / max(dot(waterModel[2].xyz, waterModel[2].xyz), 0.0001));
       }
       #include <project_vertex>`);
 }

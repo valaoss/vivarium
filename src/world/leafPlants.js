@@ -333,7 +333,7 @@ function rosette(kind, seed, uniforms, o) {
 
 // ---------------------------------------------------------------- türler
 // Amazon kılıcı (Echinodorus bleheri): uzun saplı, geniş mızrak yapraklı, kemerli büyük rozet
-export const buildSword = (seed, u) => rosette('sword', seed, u, { n: [12, 17], len: 24, rise: [0.55, 1.35], droop: 0.9, twist: 0.5, curl: 0.12, flex: 0.9, spread: 1.2 });
+export const buildSword = (seed, u) => rosette('sword', seed, u, { n: [12, 17], len: 24, rise: [0.95, 1.45], droop: 0.75, twist: 0.5, curl: 0.12, flex: 0.9, spread: 1.2 });
 // Kriptokorin (C. wendtii): orta boy, dalgalı kenarlı, kahve-yeşil rozet
 export const buildCrypt = (seed, u) => rosette('crypt', seed, u, { n: [9, 14], len: 11, rise: [0.6, 1.25], droop: 0.55, twist: 0.6, curl: 0.15, flex: 0.6, spread: 1.6 });
 // Anubias barteri: sürünen kalın rizomdan kısa saplı, koyu, parlak, geniş oval yapraklar

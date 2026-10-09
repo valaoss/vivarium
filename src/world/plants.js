@@ -70,9 +70,11 @@ export function createPlants(scene) {
       }
     }
     plant.size = { h: _box.max.y - plant.y, r: Math.min(_box.max.x - _box.min.x, _box.max.z - _box.min.z) / 2 };
-    const pad = plant.type === 'frogbit' ? 2 : 0.4;        // yüzen bitki sürüklenme payı
-    const dx = Math.max(0, -HALF_W + pad - _box.min.x) - Math.max(0, _box.max.x - (HALF_W - pad));
-    const dz = Math.max(0, -HALF_D + pad - _box.min.z) - Math.max(0, _box.max.z - (HALF_D - pad));
+    const pad = plant.type === 'frogbit' ? 2 : 1;          // yüzen bitki sürüklenme payı; diğerleri salınım payı
+    // bitki dikildiği yerden en çok 4 cm kayar; yine taşan yapraklar gölgelendiricide cama yaslanır (camdan geçmez)
+    const lim = (v) => Math.max(-4, Math.min(4, v));
+    const dx = lim(Math.max(0, -HALF_W + pad - _box.min.x) - Math.max(0, _box.max.x - (HALF_W - pad)));
+    const dz = lim(Math.max(0, -HALF_D + pad - _box.min.z) - Math.max(0, _box.max.z - (HALF_D - pad)));
     if (dx || dz) {
       plant.x += dx; plant.z += dz;
       if (plant.onSand && plant.type !== 'frogbit') plant.y = sandHeight(plant.x, plant.z) - 0.3;
