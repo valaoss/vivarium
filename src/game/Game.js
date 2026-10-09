@@ -384,6 +384,7 @@ export class Game {
   // erkek varsa ara sıra 2–4 yavru doğar; yavrular birkaç günde büyür.
   updateBreeding(dtMin) {
     const h = dtMin / 60;
+    const dead = [];
     for (const c of this.creatures) {
       const d = c.data;
       // yaşlanma: tür ömrünün son çeyreğinde balık yavaşlar, rengi solar, daha çok dinlenir
@@ -391,7 +392,11 @@ export class Game {
       if (life) {
         d.ageDays ??= d.fry ? 0 : life * DAYS_PER_YEAR * (0.15 + Math.random() * 0.3);
         d.ageDays += dtMin / 1440;
-        c.elder = d.ageDays > life * DAYS_PER_YEAR * 0.75;
+        // her bireyin ömrü türün ortalamasından biraz farklı; kötü bakım ömrü kısaltır
+        d.lifeK ??= 0.85 + Math.random() * 0.3;
+        const span = life * DAYS_PER_YEAR * d.lifeK * (0.75 + d.health / 400);
+        c.elder = d.ageDays > span * 0.75;
+        if (d.ageDays > span) { dead.push(c); continue; }
       }
       // Büyüme: tok ve sağlıklıyken yavaş, boy yetişkine yaklaştıkça daha da yavaşlar (birkaç oyun günü)
       if (d.adultSize && !d.fry && d.size < d.adultSize - 0.002) {
@@ -406,6 +411,12 @@ export class Game {
           this.discover('fryGrown', 'Yavrular bitkiler arasında saklanarak büyür; sık bitkili tanklarda hayatta kalma şansları artar.');
         }
       }
+    }
+    for (const c of dead) {
+      this.removeCreature(c);
+      this.state.counters.deaths = (this.state.counters.deaths ?? 0) + 1;
+      this.toast(`${c.data.name} (${c.sp.name}) ${Math.floor(c.data.ageDays)} günlük ömrünü tamamlayıp yaşlılıktan öldü.`, 'warn');
+      this.discover('oldAge', `${c.sp.name} ortalama ${c.prof.life} yıl yaşar; iyi bakılan balık ömrünün sonuna kadar yaşar.`);
     }
     this.updateEggs(h);
     if (this.creatures.length >= TANK.cap) return;
