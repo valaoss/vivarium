@@ -752,6 +752,8 @@ export class Shrimp extends Agent {
     }
     y = Math.max(y, g(this.pos.x, this.pos.z) + 0.3 * sc);
     this.pos.y += (y - this.pos.y) * Math.min(1, dt * 10);
+    // gövde hiçbir durumda zemine gömülmez (basamak çıkarken yumuşatma geride kalsa da)
+    this.pos.y = Math.max(this.pos.y, g(this.pos.x, this.pos.z) + 0.25 * sc);
     this.place();
     this.planter.update(dt, { pos: this.pos, heading: this.heading, scale: sc }, this.vel, this.yawRate, g);
   }

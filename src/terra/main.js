@@ -1,4 +1,5 @@
 import { trackFrameBudget } from '../render/frameBudget.js';
+import { prewarm } from '../render/prewarm.js';
 import { Terrarium } from './Terrarium.js';
 import { createTerraHUD } from './hud.js';
 
@@ -16,6 +17,8 @@ export function startTerra() {
     hud.update(dt);
     requestAnimationFrame(frame);
   }
+  prewarm(terra.renderer, terra.scene, terra.camera);
+  setTimeout(() => prewarm(terra.renderer, terra.scene, terra.camera), 4000);
   requestAnimationFrame(frame);
   window.terra = terra;
 }

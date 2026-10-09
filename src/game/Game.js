@@ -352,7 +352,7 @@ export class Game {
 
   // Salyangozların camdaki yosunu kazıması
   // ön camın iç yüzündeki yosun yoğunluğu (0..1)
-  glassAlgae(x, y) {
+  glassAlgaeAt(x, y) {
     const u = (x + HALF_W + TANK.glass) / (TANK.w + 2 * TANK.glass);
     const v = (y + TANK.glass) / (TANK.h + TANK.glass);
     const xx = Math.floor(u * ALGAE_GRID.w), yy = Math.floor(v * ALGAE_GRID.h);
@@ -1176,9 +1176,10 @@ export class Game {
       algae: w.algae / 100,
       cleanGlass: (x, y, a) => this.cleanGlass(x, y, a),
       ground: this.groundFn ??= (x, z) => this.ground(x, z),
-      glassAlgae: this.glassAlgaeFn ??= (x, y) => this.glassAlgae(x, y),
+      glassAlgae: this.glassAlgaeFn ??= (x, y) => this.glassAlgaeAt(x, y),
       hf: this.hf,
       hour: this.hour,
+      time: WU.uTime.value,
       turbidity: WU.uTurbidity.value,
       flow: this.state.airstone ? 0.7 : 0.25,
     };
@@ -1202,10 +1203,13 @@ export class Game {
       this.trailClock %= 0.1;
       this.trailSource = (this.trailSource ?? 0) % this.creatures.length;
       const c = this.creatures[this.trailSource++];
-      if (c.vel && c.vel.lengthSq() > 0.1) {
+      const v2 = c.vel?.lengthSq() ?? 0;
+      if (v2 > 0.1 && Number.isFinite(v2)) {
         const slot = this.trailSlot = ((this.trailSlot ?? -1) + 1) % 8;
         const r = Math.max(1.2, c.total * 0.55);
-        WU.uWakeTrail.value[slot].set(c.pos.x - c.fwd.x * r, c.pos.y, c.pos.z - c.fwd.z * r, r);
+        // balıkta gövde yönü, karides gibi diğerlerinde hareket yönü
+        const inv = 1 / Math.sqrt(v2), fx = c.fwd?.x ?? c.vel.x * inv, fz = c.fwd?.z ?? c.vel.z * inv;
+        WU.uWakeTrail.value[slot].set(c.pos.x - fx * r, c.pos.y, c.pos.z - fz * r, r);
         WU.uTrailVelocity.value[slot].copy(c.vel).multiplyScalar(0.7);
       }
     }
@@ -1255,15 +1259,17 @@ export class Game {
       if (!c.vel || c.wakeTimer > 0) continue;
       const top = c.pos.y + (c.localBox?.max.y ?? 0.3) * (c.data.size ?? 1);
       const coupling = Math.exp(-Math.max(0, TANK.water - top) * 1.4);
-      const motion = Math.min(1, c.vel.length() / 8);
-      if (coupling * motion > 0.015) {
+      const sp = c.vel.length();
+      const motion = Math.min(1, sp / 8);
+      if (coupling * motion > 0.015 && Number.isFinite(sp)) {
+        const fx = c.fwd?.x ?? c.vel.x / sp, fz = c.fwd?.z ?? c.vel.z / sp;
         const r = Math.max(0.35, (c.total ?? 3) * 0.16);
         const beat = Math.sin(c.u?.uPhase?.value ?? this.time * 5);
         const strength = 0.04 * coupling * motion * (0.7 + 0.3 * beat * beat);
         const tailSide = beat * r * 0.35;
         this.waterSim.drop(c.pos.x, c.pos.z, r, -strength);
-        this.waterSim.drop(c.pos.x - c.fwd.x * r * 1.5 + c.fwd.z * tailSide,
-          c.pos.z - c.fwd.z * r * 1.5 - c.fwd.x * tailSide, r, strength);
+        this.waterSim.drop(c.pos.x - fx * r * 1.5 + fz * tailSide,
+          c.pos.z - fz * r * 1.5 - fx * tailSide, r, strength);
         c.wakeTimer = 0.12;
       }
     }
@@ -1291,9 +1297,22 @@ export class Game {
 
   renderFrame() {
     this.camera.updateMatrixWorld();
-    this.reflection.update(this.camera);
-    this.updateMirrors();
+    const q = this.quality ?? 3, k = this.renderTick = (this.renderTick ?? 0) + 1;
+    // düşük kalitede gölge haritası ve su yansıması iki karede bir yenilenir
+    const r = this.renderer;
+    if (q < 2) r.shadowMap.needsUpdate = k % 2 === 0;
+    r.shadowMap.autoUpdate = q >= 2;
+    if (q >= 2 || k % 2 === 1 || this.photo) this.reflection.update(this.camera);
+    if (q >= 3 || this.photo) this.updateMirrors();
     this.fx.render(this.time);
+  }
+
+  // Kare süresi en düşük çözünürlükte de yetmezse kalite basamak basamak iner, geri çıkmaz (gidip gelme olmaz)
+  degradeQuality() {
+    const q = this.quality = (this.quality ?? 3) - 1;
+    if (q === 2) { MIRROR_U.uMirOn0.value = 0; MIRROR_U.uMirOn1.value = 0; }
+    if (q === 0) this.fx.bloom.enabled = false;
+    return q > 0;
   }
 
   updateMirrors() {
@@ -1310,7 +1329,8 @@ export class Game {
       // Refresh one side reflection per frame; initialize both before alternating.
       const cam = c.clone().sub(p).dot(n) > 0;
       MIRROR_U['uMirOn' + i].value = cam ? 1 : 0;
-      if (!cam || (this.mirrorFrame > 1 && !this.photo && this.mirrorFrame % 2 !== i)) return;
+      // her cam üç karede bir yenilenir; kalan karede ayna çizilmez
+      if (!cam || (this.mirrorFrame > 2 && !this.photo && this.mirrorFrame % 3 !== i)) return;
       const m = this.mirrors[i];
       m.update(this.camera, n, p);
       MIRROR_U['uMirMat' + i].value.copy(m.textureMatrix);

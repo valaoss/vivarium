@@ -2,13 +2,17 @@
 // shadows and water simulation keep their original quality. Hysteresis prevents
 // visible resolution pumping during brief shader compilation or pointer bursts.
 export class FrameBudget {
-  constructor(maxRatio, minRatio = Math.min(1, maxRatio)) {
+  constructor(maxRatio, minRatio = Math.min(0.75, maxRatio)) {
     this.maxRatio = maxRatio;
     this.minRatio = minRatio;
     this.ratio = maxRatio;
     this.elapsed = 0;
     this.frames = 0;
     this.fastWindows = 0;
+    // geri yükseltme kısa süre sonra yine düşürmeye yol açarsa (sınırda kalan cihaz) bir sonraki
+    // deneme giderek uzayan bir beklemeden sonra yapılır: çözünürlük gidip gelmez, takılma olmaz
+    this.sinceRaise = Infinity;
+    this.failedRaises = 0;
   }
 
   sample(dt) {
@@ -19,11 +23,18 @@ export class FrameBudget {
     const average = this.elapsed / this.frames;
     this.elapsed = this.frames = 0;
     let next = this.ratio;
+    this.sinceRaise++;
     if (average > 1 / 42) {
-      next = Math.max(this.minRatio, this.ratio - 0.2);
+      // en düşük çözünürlükte de yavaşsa çağıran kaliteyi düşürür
+      if (this.ratio <= this.minRatio) { this.fastWindows = 0; return 'degrade'; }
+      // az önceki yükseltme kaldırılamadıysa yalnız onu geri al
+      const failed = this.sinceRaise <= 3;
+      next = Math.max(this.minRatio, this.ratio - (failed ? 0.1 : 0.2));
       this.fastWindows = 0;
+      if (failed && next !== this.ratio) this.failedRaises = Math.min(5, this.failedRaises + 1);
     } else if (average < 1 / 57) {
-      if (++this.fastWindows >= 3) {
+      if (++this.fastWindows >= 3 * 3 ** this.failedRaises) {
+        this.sinceRaise = 0;
         next = Math.min(this.maxRatio, this.ratio + 0.1);
         this.fastWindows = 0;
       }
@@ -41,6 +52,7 @@ export function trackFrameBudget(world) {
     if (document.hidden || world.photo) return;
     const ratio = budget.sample(dt);
     if (ratio === null) return;
+    if (ratio === 'degrade') { world.degradeQuality?.(); return; }
     world.renderer.setPixelRatio(ratio);
     world.fx.composer.setPixelRatio(ratio);
     world.reflection.setSize(window.innerWidth, window.innerHeight);

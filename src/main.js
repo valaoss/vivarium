@@ -1,4 +1,5 @@
 import { trackFrameBudget } from './render/frameBudget.js';
+import { prewarm } from './render/prewarm.js';
 import { Game } from './game/Game.js';
 import { createHUD } from './ui/hud.js';
 import { Sound } from './audio/Sound.js';
@@ -43,6 +44,8 @@ function start() {
     sound.update(Math.min(dt, 0.1), { camera: game.camera, airstone: game.state.airstone, lightLevel: game.lightLevel, speed: game.speed, wiping: game.wiping });
     requestAnimationFrame(frame);
   }
+  prewarm(game.renderer, game.scene, game.camera);
+  setTimeout(() => prewarm(game.renderer, game.scene, game.camera), 4000);
   requestAnimationFrame(frame);
 
   // Geliştirme kolaylığı
